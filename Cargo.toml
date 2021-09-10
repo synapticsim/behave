@@ -1,0 +1,6 @@
+[workspace]
+
+members = [
+    "behave",
+    "behave-cli"
+]

@@ -1,0 +1,105 @@
+main_file = { import }, lods, behavior;
+secondary_file = { import } , { item };
+
+import = ( "import", path ) | ( "extern", string ), ";";
+
+lods = "lods", "{", { number, "->", string }, "}";
+behavior = "behavior", "{", { component }, "}";
+
+component = "component", string, [ "on", expression ], "{", { subcomponent }, "}";
+subcomponent = template_use | extern_template_use | animation;
+
+template_use = "use", path, ( "{", arguments, "}" ) | ";";
+extern_template_use = "extern", "use", string, block | ";";
+animation = "animation", expression, "{", arguments, "}";
+
+arguments = { "ident", [ ":", expression ], "," }, [ "ident", [ ":", expression ] ];
+
+item = function_item | variable | struct | enum | template;
+
+function_item = "fn", ident, arg_list, [ "->", type ], block;
+variable = "let", ident, ( [ ":", type ], "=", expression, ) | ( ":", type ), ";";
+struct = "struct", ident, "{", { var_entry }, "}";
+enum = "enum", ident, "{", { ident, "=", number }, "}";
+template = "template", ident, arg_list, template_block;
+
+arg_list = "(", { var_entry }, ")";
+var_entry = ident, ":", type;
+
+type = "num" | "str" | "bool" | "code" | ident | array_type | tuple_type | function_type | optional_type;
+array_type = "[", type, "]";
+tuple_type = "(",  { type, "," }, [ "type" ], ")";
+function_type = "fn", tuple_type, [ "->", type ];
+optional_type = type, "?";
+
+block = "{", { statement }, [ expression ], "}";
+
+statement = ( expression, ";" ) | item | return | break;
+expression = assignment | block | if | switch | while | for;
+
+assignment = ( path, "=", assignment ) | or;
+or = and, { "or", and };
+and = equality, { "and", equality };
+equality = comparision, { ( "==" | "!=" ), comparision };
+comparision = term, { ( ">" | "<" | ">=" | "<=" ), term };
+term = factor, { ( "-" | "+" ), factor };
+factor = unary, { ( "*" | "/" ), unary };
+unary = ( ( "!" | "-" ), unary ) | call;
+call = primary, { "(", [ arguments ], ")" };
+arguments = expression, { ",", expression };
+primary = number | string | boolean | function | ( "(", expression, ")" ) | var_access | tuple | code | "none";
+var_access = path, [ "[", expression, "]" ];
+tuple = "(", { expression, "," }, [ expression ], ")";
+code = "@", "{", { code_statement }, [ code_expression ], "}";
+
+return = "return", [ expression ], ";";
+break = "break", ";";
+
+if = "if", expression, block, { "else", "if", expression, block }, [ "else", block ];
+switch = "switch", expression, "{", { expression, "->", ( block | expression ), "," }, [ expression, "->", ( block | expression ) ] "}";
+while = "while", expression, block;
+for = "for", ident, "in", expression, block;
+
+code_statement = ( code_expression, ";" ) | code_return | code_break;
+code_expression = code_assignment | code_block | code_if | code_switch | code_while | code_for;
+
+code_assignment = ( path, "=", code_assignment ) | code_or;
+code_or = code_and, { "or", code_and };
+code_and = code_equality, { "and", code_equality };
+code_equality = code_comparision, { ( "==" | "!=" ), code_comparision };
+code_comparision = code_term, { ( ">" | "<" | ">=" | "<=" ), code_term };
+code_term = code_factor, { ( "-" | "+" ), code_factor };
+code_factor = code_unary, { ( "*" | "/" ), code_unary };
+code_unary = ( ( "!" | "-" ), code_unary ) | code_call;
+code_call = code_primary, { "(", [ code_arguments ], ")" };
+code_arguments = code_expression, { ",", code_expression };
+code_primary = number | string | boolean | function | ( "(", expression, ")" ) | code_var_access | code_tuple;
+code_var_access = ( path, [ "[", code_expression, "]" ] ) | ( "(" ident, ":", { ident }, [ ":", number ], [ ",", ident ], ")" );
+code_tuple = "(", { code_expression, "," }, [ code_expression ], ")";
+
+code_return = "return", [ code_expression ], ";";
+code_break = "break", ";";
+
+code_if = "if", code_expression, code_block, { "else", "if", code_expression, code_block }, [ "else", code_block ];
+code_switch = "switch", code_expression, "{", { code_expression, "->", ( code_block | code_expression ), "," }, [ code_expression, "->", ( code_block | code_expression ) ] "}";
+code_while = "while", code_expression, code_block;
+code_for = "for", ident, "in", code_expression, code_block;
+
+code_path = ident, { ".", ident };
+
+(* Lexer *)
+ident = letter, { letter | digit };
+number = ( ".", { digit } ) | ( { digit }, [ ".", { digit } ] );
+boolean = "true" | "false";
+
+string = "\"", { * }, "\"";
+
+letter = "A" | "B" | "C" | "D" | "E" | "F" | "G"
+       | "H" | "I" | "J" | "K" | "L" | "M" | "N"
+       | "O" | "P" | "Q" | "R" | "S" | "T" | "U"
+       | "V" | "W" | "X" | "Y" | "Z" | "a" | "b"
+       | "c" | "d" | "e" | "f" | "g" | "h" | "i"
+       | "j" | "k" | "l" | "m" | "n" | "o" | "p"
+       | "q" | "r" | "s" | "t" | "u" | "v" | "w"
+       | "x" | "y" | "z" | "_";
+digit = "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9";
