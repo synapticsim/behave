@@ -29,7 +29,7 @@ impl<'a> Lexer<'a> {
 
 impl Lexer<'_> {}
 
-impl Iterator for &mut Lexer<'_> {
+impl Iterator for Lexer<'_> {
 	type Item = Token;
 
 	fn next(&mut self) -> Option<Self::Item> {
@@ -42,6 +42,8 @@ impl Iterator for &mut Lexer<'_> {
 			')' => Token(TokenType::RightParen, c.0..c.0 + 1),
 			'{' => Token(TokenType::LeftBrace, c.0..c.0 + 1),
 			'}' => Token(TokenType::RightBrace, c.0..c.0 + 1),
+			'[' => Token(TokenType::LeftBracket, c.0..c.0 + 1),
+			']' => Token(TokenType::RightBracket, c.0..c.0 + 1),
 			',' => Token(TokenType::Comma, c.0..c.0 + 1),
 			'.' => Token(TokenType::Period, c.0..c.0 + 1),
 			':' => Token(TokenType::Colon, c.0..c.0 + 1),
@@ -219,7 +221,11 @@ impl Iterator for &mut Lexer<'_> {
 				let ident = &self.source_raw[start_byte_index..end_byte_index];
 				match KEYWORDS.get(ident) {
 					Some(token) => Token(token.clone(), start_byte_index..end_byte_index),
-					None => Token(TokenType::Ident(ident.to_string()), start_byte_index..end_byte_index),
+					None => match ident {
+						"true" => Token(TokenType::Boolean(true), start_byte_index..end_byte_index),
+						"false" => Token(TokenType::Boolean(false), start_byte_index..end_byte_index),
+						_ => Token(TokenType::Ident(ident.to_string()), start_byte_index..end_byte_index),
+					},
 				}
 			},
 			_ => Token(
@@ -270,8 +276,6 @@ lazy_static! {
 		m.insert("switch", TokenType::Switch);
 		m.insert("let", TokenType::Let);
 		m.insert("alias", TokenType::Alias);
-		m.insert("true", TokenType::True);
-		m.insert("false", TokenType::False);
 		m.insert("none", TokenType::None);
 		m
 	};

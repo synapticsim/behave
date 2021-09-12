@@ -1,8 +1,0 @@
-import Imported;
-extern;
-
-lods {
-    0 -> "LOD 2",
-    50 -> "LOD 1",
-    100 -> "LOD 0"
-}

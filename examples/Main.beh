@@ -1,0 +1,7 @@
+import Imported;
+
+lods {
+    Imported.LODLevels[0] -> "LOD 2",
+    Imported.LODLevels[1] -> "LOD 1",
+    Imported.LODLevels[2] -> "LOD 0"
+}

@@ -7,6 +7,7 @@ pub enum TokenType {
 	Ident(String),
 	Number(f64),
 	String(String),
+	Boolean(bool),
 	Diagnostic(Diagnostic),
 	Whitespace,
 	Comment,
@@ -70,8 +71,6 @@ pub enum TokenType {
 	Switch,
 	Let,
 	Alias,
-	True,
-	False,
 	None,
 }
 
@@ -86,6 +85,7 @@ impl Token {
 			Ident(_) => "ident",
 			Number(_) => "number",
 			String(_) => "string",
+			Boolean(_) => "boolean",
 			Diagnostic(_) => unreachable!(),
 			Whitespace => unreachable!(),
 			Comment => unreachable!(),
@@ -149,8 +149,6 @@ impl Token {
 			Switch => "switch",
 			Let => "let",
 			Alias => "alias",
-			True => "true",
-			False => "false",
 			None => "none",
 		}
 	}

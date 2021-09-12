@@ -58,7 +58,7 @@ fn compile(options: &Options) -> CompileResult {
 	let result = behave::compile(file_name.to_string_lossy(), file_data, |path| {
 		let mut to_path = PathBuf::from(file_root);
 		to_path.push(path.replace('.', "/"));
-		to_path.set_extension("behave");
+		to_path.set_extension("beh");
 
 		match read_to_string(&to_path) {
 			Ok(s) => {

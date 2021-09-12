@@ -44,6 +44,8 @@ where
 		&mut diagnostics,
 	);
 
+	println!("{:#?}", asts);
+
 	CompileResult {
 		compiled: None,
 		diagnostics,
@@ -57,10 +59,15 @@ fn recursive_parse<F>(
 where
 	F: FnMut(&str) -> Result<String, (String, Error)>,
 {
-	let mut lexer = Lexer::new(source_name.as_ref(), source.as_ref());
-
 	if !asts.contains_key(source_name.as_ref()) {
-		if let Some(ast) = Parser::new(mode, source_name.as_ref(), &mut lexer, diagnostics).parse() {
+		if let Some(ast) = Parser::new(
+			mode,
+			source_name.as_ref(),
+			Lexer::new(source_name.as_ref(), source.as_ref()),
+			diagnostics,
+		)
+		.parse()
+		{
 			for import in &ast.imports {
 				if let ImportType::Normal(path) = &import.0 {
 					let path_string = {
