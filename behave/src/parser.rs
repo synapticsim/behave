@@ -3,25 +3,35 @@ use std::{iter::Peekable, ops::Range};
 use crate::{
 	ast::{
 		ASTType,
+		Assignment,
 		Behaviors,
 		BinaryOperator,
+		Block,
+		Call,
+		Case,
 		Enum,
 		EnumVariant,
 		Expression,
 		ExpressionType,
+		Function,
 		FunctionType,
 		Ident,
+		IfChain,
 		Import,
 		ImportType,
+		Index,
 		Item,
 		ItemType,
 		LODs,
 		Path,
+		Statement,
+		StatementType,
 		Struct,
 		Type,
 		TypeType,
 		UnaryOperator,
 		VarEntry,
+		Variable,
 		AST,
 		LOD,
 	},
@@ -237,7 +247,7 @@ impl Parser<'_> {
 		let mut ast = AST {
 			imports: Vec::new(),
 			ast_data: match self.mode {
-				ParserMode::MainFile => ASTType::Main(LODs(Vec::new(), no_range()), Behaviors(no_range())),
+				ParserMode::MainFile => ASTType::Main(LODs(Vec::new(), no_range()), Behaviors(Vec::new(), no_range())),
 				ParserMode::ImportedFile => ASTType::Secondary(Vec::new()),
 			},
 		};
@@ -300,7 +310,7 @@ impl Parser<'_> {
 							error = true;
 							continue 'w;
 						});
-						behaviors.0 = merge_range!(token.1, &behaviors.0);
+						behaviors.1 = merge_range!(token.1, &behaviors.1);
 					},
 					ASTType::Secondary(..) => {
 						error = true;
@@ -311,7 +321,7 @@ impl Parser<'_> {
 								.add_label(Label::primary(
 									self.file,
 									"move this to the main `.beh` file",
-									merge_range!(token.1, behaviors.0),
+									merge_range!(token.1, behaviors.1),
 								)),
 						);
 					},
@@ -363,23 +373,48 @@ impl Parser<'_> {
 				TokenType::Let => match ast.ast_data {
 					ASTType::Main(..) => {
 						error = true;
-						let item = resync!(self, self.parse_variable(ExpressionParseMode::Normal), until TokenType::Semicolon, else continue 'w);
+						let var = resync!(self, self.parse_variable(ExpressionParseMode::Normal), until TokenType::Semicolon, else continue 'w);
 						self.diagnostics.push(
 							Diagnostic::new(Level::Error, "Variable declaration is only allowed in imported files")
 								.add_label(Label::primary(
 									self.file,
 									"move this to an imported `.beh` file",
-									merge_range!(token.1, item.1),
+									merge_range!(token.1, var.1),
 								)),
 						)
 					},
 					ASTType::Secondary(ref mut items) => {
-						let mut item = resync!(self, self.parse_variable(ExpressionParseMode::Normal), until TokenType::Semicolon, else {
+						let var = resync!(self, self.parse_variable(ExpressionParseMode::Normal), until TokenType::Semicolon, else {
 							error = true;
 							continue 'w;
 						});
-						item.1 = merge_range!(token.1, item.1);
-						items.push(item);
+						items.push(Item(ItemType::Variable(var.0), merge_range!(token.1, var.1)));
+					},
+				},
+				TokenType::Function => match ast.ast_data {
+					ASTType::Main(..) => {
+						error = true;
+						let _ = resync!(self, self.parse_ident(), until TokenType::RightBrace, else continue 'w);
+						let func = resync!(self, self.parse_function(ExpressionParseMode::Normal), until TokenType::RightBrace, else continue 'w);
+						self.diagnostics.push(
+							Diagnostic::new(Level::Error, "Function declaration is only allowed in imported files")
+								.add_label(Label::primary(
+									self.file,
+									"move this to an imported `.beh` file",
+									merge_range!(token.1, func.1),
+								)),
+						)
+					},
+					ASTType::Secondary(ref mut items) => {
+						let ident = resync!(self, self.parse_ident(), until TokenType::RightBrace, else {
+							error = true;
+							continue 'w
+						});
+						let func = resync!(self, self.parse_function(ExpressionParseMode::Normal), until TokenType::RightBrace, else {
+							error = true;
+							continue 'w;
+						});
+						items.push(Item(ItemType::Function(ident, func.0), merge_range!(token.1, func.1)));
 					},
 				},
 				_ => {
@@ -441,8 +476,8 @@ impl Parser<'_> {
 	}
 
 	fn parse_behaviors(&mut self) -> Result<Behaviors, Diagnostic> {
-		let mut behaviors = Behaviors(no_range());
-		behaviors.0 = merge_range!(
+		let mut behaviors = Behaviors(Vec::new(), no_range());
+		behaviors.1 = merge_range!(
 			expect!(self, TokenType::LeftBrace, "expected `{`"),
 			expect!(self, TokenType::RightBrace, "expected `}`")
 		);
@@ -496,10 +531,7 @@ impl Parser<'_> {
 				}
 			}
 		} else {
-			return Err(Diagnostic::new(
-				Level::Error,
-				"unexpected end of file: expected type or `)`",
-			));
+			return Err(Diagnostic::new(Level::Error, "unexpected end of file: expected `}`"));
 		}
 
 		Ok(Item(
@@ -508,22 +540,42 @@ impl Parser<'_> {
 		))
 	}
 
-	fn parse_variable(&mut self, mode: ExpressionParseMode) -> Result<Item, Diagnostic> {
+	fn parse_variable(&mut self, mode: ExpressionParseMode) -> Result<(Variable, Range<usize>), Diagnostic> {
 		let name = self.parse_ident()?;
 		let range = name.1.clone();
+		let mut last_range = range.clone();
 		let ty = peek!(self, TokenType::Colon, if {
-			Some(self.parse_type()?)
+			let ty = self.parse_type()?;
+			last_range = ty.1.clone();
+			Some(ty)
 		} else {
 			None
 		});
-		let init = peek!(self, TokenType::Equal, if {
-			Some(self.parse_expression(mode)?)
+		let value = peek!(self, TokenType::Equal, if {
+			let expr = self.parse_expression(mode)?;
+			last_range = expr.1.clone();
+			Some(expr)
 		} else {
 			None
 		});
-		Ok(Item(
-			ItemType::Variable(name, ty, init),
-			merge_range!(range, expect!(self, TokenType::Semicolon, "expected `semicolon`")),
+		Ok((
+			Variable { name, ty, value },
+			merge_range!(&range, {
+				let tok = next!(self);
+				match tok.0 {
+					TokenType::Semicolon => {},
+					_ => {
+						return Err(
+							Diagnostic::new(Level::Error, "expected `semicolon`").add_label(Label::primary(
+								self.file,
+								"add a semicolon after this",
+								last_range,
+							)),
+						)
+					},
+				};
+				tok.1
+			}),
 		))
 	}
 
@@ -553,22 +605,33 @@ impl Parser<'_> {
 			),
 			TokenType::Function => {
 				expect!(self, TokenType::LeftParen, "expected `(`");
-				let args = self.parse_tuple_type()?;
-				let mut range = merge_range!(tok.1, args.1);
-				let mut ty = FunctionType {
-					args: args.0,
-					ret: None,
-				};
+				let mut args = Vec::new();
+				let mut range = tok.1;
+				if let Some(tok) = self.peek() {
+					if let TokenType::RightParen = tok.0 {
+						range = tok.1;
+					} else {
+						loop {
+							let ty = self.parse_type()?;
+							range = merge_range!(range, &ty.1);
+							args.push(ty);
+							peek!(self, TokenType::Comma, else break);
+						}
+					}
+				} else {
+					return Err(Diagnostic::new(
+						Level::Error,
+						"unexpected end of file: expected type or `)`",
+					));
+				}
+				range = merge_range!(range, expect!(self, TokenType::RightParen, "expected `)`"));
+				let mut ty = FunctionType { args, ret: None };
 				peek!(self, TokenType::Arrow, if {
 					let ret = self.parse_type()?;
 					range = merge_range!(range, &ret.1);
 					ty.ret = Some(Box::new(ret))
 				});
 				Type(TypeType::Function(ty), range)
-			},
-			TokenType::LeftParen => {
-				let ty = self.parse_tuple_type()?;
-				Type(TypeType::Tuple(ty.0), merge_range!(tok.1, ty.1))
 			},
 			_ => {
 				return Err(Diagnostic::new(Level::Error, "expected type").add_label(Label::unexpected(self.file, &tok)))
@@ -591,60 +654,8 @@ impl Parser<'_> {
 		})
 	}
 
-	fn parse_tuple_type(&mut self) -> Result<(Vec<Type>, Range<usize>), Diagnostic> {
-		let mut tuple = Vec::new();
-		let mut range = no_range();
-		if let Some(tok) = self.peek() {
-			if let TokenType::RightParen = tok.0 {
-				range = tok.1;
-			} else {
-				loop {
-					let ty = self.parse_type()?;
-					range = merge_range!(range, &ty.1);
-					tuple.push(ty);
-					peek!(self, TokenType::Comma, else break);
-				}
-			}
-		} else {
-			return Err(Diagnostic::new(
-				Level::Error,
-				"unexpected end of file: expected type or `)`",
-			));
-		}
-		Ok((
-			tuple,
-			merge_range!(range, expect!(self, TokenType::RightParen, "expected `)`")),
-		))
-	}
-
 	fn parse_expression(&mut self, mode: ExpressionParseMode) -> Result<Expression, Diagnostic> {
 		self.parse_with_precedence(precedence::ASSIGNMENT, mode)
-	}
-
-	fn parse_tuple(&mut self, mode: ExpressionParseMode) -> Result<Expression, Diagnostic> {
-		let mut range = self.next().unwrap().1;
-		let mut tuple = Vec::new();
-		if let Some(tok) = self.peek() {
-			if let TokenType::RightParen = tok.0 {
-				range = merge_range!(range, tok.1);
-			} else {
-				loop {
-					let expr = self.parse_expression(mode)?;
-					range = merge_range!(range, &expr.1);
-					tuple.push(expr);
-					peek!(self, TokenType::Comma, else break);
-				}
-			}
-		} else {
-			return Err(Diagnostic::new(
-				Level::Error,
-				"unexpected end of file: expected expression or `)`",
-			));
-		}
-		Ok(Expression(
-			ExpressionType::Tuple(tuple),
-			merge_range!(range, expect!(self, TokenType::RightParen, "expected `)`")),
-		))
 	}
 
 	fn parse_array(&mut self, mode: ExpressionParseMode) -> Result<Expression, Diagnostic> {
@@ -674,10 +685,18 @@ impl Parser<'_> {
 	}
 
 	fn parse_unary(&mut self, op: UnaryOperator, mode: ExpressionParseMode) -> Result<Expression, Diagnostic> {
-		self.next();
+		let tok = next!(self);
 		let expr = self.parse_with_precedence(precedence::UNARY, mode)?;
-		let r = expr.1.clone();
-		Ok(Expression(ExpressionType::Unary(op, Box::new(expr)), r))
+		let range = merge_range!(tok.1, expr.1.clone());
+		if mode != ExpressionParseMode::Template {
+			Ok(Expression(ExpressionType::Unary(op, Box::new(expr)), range))
+		} else {
+			Err(Diagnostic::new(
+				Level::Error,
+				"a unary expression is not allowed in template expressions",
+			)
+			.add_label(Label::primary(self.file, "unexpected expression", range)))
+		}
 	}
 
 	fn parse_binary(
@@ -685,10 +704,109 @@ impl Parser<'_> {
 	) -> Result<Expression, Diagnostic> {
 		let right = self.parse_with_precedence(precedence + 1, mode)?;
 		let range = merge_range!(&left.1, &right.1);
-		Ok(Expression(
-			ExpressionType::Binary(Box::new(left), op, Box::new(right)),
-			range,
-		))
+		if mode != ExpressionParseMode::Template {
+			Ok(Expression(
+				ExpressionType::Binary(Box::new(left), op, Box::new(right)),
+				range,
+			))
+		} else {
+			Err(Diagnostic::new(
+				Level::Error,
+				"a binary expression is not allowed in template expressions",
+			)
+			.add_label(Label::primary(self.file, "unexpected expression", range)))
+		}
+	}
+
+	fn parse_rpn(&mut self, mode: ExpressionParseMode) -> Result<Expression, Diagnostic> {
+		let tok = next!(self);
+		match mode {
+			ExpressionParseMode::Normal => {
+				let next = next!(self);
+				if let TokenType::LeftBrace = next.0 {
+					let block = self.parse_block(ExpressionParseMode::RPNCode)?;
+					Ok(Expression(ExpressionType::Code(block.0), merge_range!(tok.1, block.1)))
+				} else {
+					Err(Diagnostic::new(Level::Error, "expected RPN code block")
+						.add_label(Label::unexpected(self.file, &next))
+						.add_note("RPN variables can only be read when inside an RPN code block"))
+				}
+			},
+			ExpressionParseMode::RPNCode => {
+				let variable = match self.parse_expression(mode) {
+					Ok(expr) => expr,
+					Err(diag) => return Err(diag.add_note("expected MSFS variable")),
+				};
+				let range = variable.1.clone();
+				Ok(Expression(
+					ExpressionType::RPNAccess(Box::new(variable)),
+					merge_range!(tok.1, range),
+				))
+			},
+			ExpressionParseMode::Template => Err(Diagnostic::new(
+				Level::Error,
+				"expected either component or template expression",
+			)
+			.add_label(Label::primary(self.file, "unexpected RPN expression", tok.1))),
+		}
+	}
+
+	fn parse_block(&mut self, mode: ExpressionParseMode) -> Result<(Block, Range<usize>), Diagnostic> {
+		let mut block = Block {
+			statements: Vec::new(),
+			expression: None,
+		};
+		let mut range = no_range();
+		let mut tok = peek!(self, else return Err(Diagnostic::new(Level::Error, "unexpected end of file")));
+		if let TokenType::RightBrace = tok.0 {
+			self.next();
+			Ok((block, tok.1))
+		} else {
+			loop {
+				match tok.0 {
+					TokenType::Let => {
+						self.next();
+						let item = self.parse_variable(mode)?;
+						range = merge_range!(range, &item.1);
+						block
+							.statements
+							.push(Statement(StatementType::Declaration(item.0), item.1));
+					},
+					_ => {
+						let expr = self.parse_expression(mode)?;
+						range = merge_range!(range, &expr.1);
+						peek!(self, TokenType::Semicolon, if {
+							block.statements.push(Statement(StatementType::Expression(expr.0), expr.1))
+						} else {
+							if let Some(expr) = block.expression {
+								return Err(
+									Diagnostic::new(Level::Error, "missing semicolon after statement")
+									.add_label(Label::primary(self.file, "add a semicolon after this expression", expr.1))
+								);
+							} else {
+								block.expression = Some(Box::new(expr));
+							}
+						})
+					},
+				}
+
+				let next = if let Some(tok) = self.peek() {
+					tok
+				} else {
+					return Err(Diagnostic::new(Level::Error, "unexpected end of file"));
+				};
+				match &next.0 {
+					TokenType::RightBrace => {
+						range = merge_range!(range, next.1);
+						self.next();
+						break;
+					},
+					_ => tok = next,
+				}
+			}
+
+			Ok((block, range))
+		}
 	}
 
 	fn parse_with_precedence(
@@ -732,6 +850,40 @@ impl Parser<'_> {
 		}
 
 		Ok(expr)
+	}
+
+	fn parse_function(&mut self, mode: ExpressionParseMode) -> Result<(Function, Range<usize>), Diagnostic> {
+		let mut params = Vec::new();
+		let mut range = expect!(self, TokenType::LeftParen, "expected `(`");
+		let tok = peek!(self, else return Err(Diagnostic::new(Level::Error, "unexpected end of file: expected `)`")));
+		if let TokenType::RightParen = tok.0 {
+			range = tok.1;
+		} else {
+			loop {
+				let arg = self.parse_var_entry()?;
+				range = merge_range!(range, &arg.range);
+				params.push(arg);
+				peek!(self, TokenType::Comma, else break);
+			}
+		}
+		range = merge_range!(range, expect!(self, TokenType::RightParen, "expected `)`"));
+		let ret = peek!(self, TokenType::Arrow, if {
+			Some(self.parse_type()?)
+		} else {
+			None
+		});
+		range = merge_range!(range, expect!(self, TokenType::LeftBrace, "expected `{`"));
+
+		let block = self.parse_block(mode)?;
+		range = merge_range!(range, block.1);
+		Ok((
+			Function {
+				params,
+				ret,
+				block: block.0,
+			},
+			range,
+		))
 	}
 
 	fn parse_path(&mut self) -> Result<Path, Diagnostic> {
@@ -786,7 +938,7 @@ impl Parser<'_> {
 	}
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 enum ExpressionParseMode {
 	Normal,
 	RPNCode,
@@ -795,46 +947,155 @@ enum ExpressionParseMode {
 
 fn get_parse_rule(token: &TokenType) -> Option<&'static ParseRule> {
 	match token {
+		TokenType::At => Some(&ParseRule {
+			prefix: Some(&|p, mode| p.parse_rpn(mode)),
+			infix: None,
+		}),
 		TokenType::Ident(_) => Some(&ParseRule {
-			prefix: Some(&|p, _| {
+			prefix: Some(&|p, mode| {
 				let path = p.parse_path()?;
-				let r = path.1.clone();
-				Ok(Expression(ExpressionType::Access(path), r))
+				if mode != ExpressionParseMode::Template {
+					let r = path.1.clone();
+					Ok(Expression(ExpressionType::Access(path), r))
+				} else {
+					Err(
+						Diagnostic::new(Level::Error, "variable access is not allowed in template expressions")
+							.add_label(Label::primary(p.file, "the variable was accessed here", path.1)),
+					)
+				}
 			}),
 			infix: None,
 		}),
 		TokenType::None => Some(&ParseRule {
-			prefix: Some(&|p, _| {
-				p.next();
-				Ok(Expression(ExpressionType::None, no_range()))
+			prefix: Some(&|p, mode| {
+				let tok = next!(p);
+				if mode != ExpressionParseMode::Template {
+					Ok(Expression(ExpressionType::None, tok.1))
+				} else {
+					Err(
+						Diagnostic::new(Level::Error, "a none expression is not allowed in template expressions")
+							.add_label(Label::primary(p.file, "unexpected expression", tok.1)),
+					)
+				}
 			}),
 			infix: None,
 		}),
 		TokenType::Number(_) => Some(&ParseRule {
-			prefix: Some(&|p, _| p.parse_number()),
+			prefix: Some(&|p, mode| {
+				let num = p.parse_number()?;
+				if mode != ExpressionParseMode::Template {
+					Ok(num)
+				} else {
+					Err(Diagnostic::new(
+						Level::Error,
+						"a number expression is not allowed in template expressions",
+					)
+					.add_label(Label::primary(p.file, "unexpected expression", num.1)))
+				}
+			}),
 			infix: None,
 		}),
 		TokenType::String(_) => Some(&ParseRule {
-			prefix: Some(&|p, _| p.parse_string()),
+			prefix: Some(&|p, mode| {
+				let string = p.parse_string()?;
+				if mode != ExpressionParseMode::Template {
+					Ok(string)
+				} else {
+					Err(Diagnostic::new(
+						Level::Error,
+						"a string expression is not allowed in template expressions",
+					)
+					.add_label(Label::primary(p.file, "unexpected expression", string.1)))
+				}
+			}),
 			infix: None,
 		}),
 		TokenType::Boolean(_) => Some(&ParseRule {
-			prefix: Some(&|p, _| p.parse_bool()),
+			prefix: Some(&|p, mode| {
+				let boolean = p.parse_bool()?;
+				if mode != ExpressionParseMode::Template {
+					Ok(boolean)
+				} else {
+					Err(Diagnostic::new(
+						Level::Error,
+						"a boolean expression is not allowed in template expressions",
+					)
+					.add_label(Label::primary(p.file, "unexpected expression", boolean.1)))
+				}
+			}),
 			infix: None,
 		}),
 		TokenType::LeftParen => Some(&ParseRule {
-			prefix: Some(&|p, mode| p.parse_tuple(mode)),
-			infix: None,
+			prefix: Some(&|p, mode| {
+				p.next();
+				let expr = p.parse_expression(mode)?;
+				if mode != ExpressionParseMode::Template {
+					let range = expr.1.clone();
+					Ok(Expression(
+						expr.0,
+						merge_range!(range, expect!(p, TokenType::RightParen, "expected `)`")),
+					))
+				} else {
+					Err(Diagnostic::new(
+						Level::Error,
+						"a grouping expression is not allowed in template expressions",
+					)
+					.add_label(Label::primary(p.file, "unexpected expression", expr.1)))
+				}
+			}),
+			infix: Some((
+				&|p, left, mode| {
+					let mut args = Vec::new();
+					let mut range = no_range();
+					if let Some(tok) = p.peek() {
+						if let TokenType::RightParen = tok.0 {
+							range = tok.1;
+						} else {
+							loop {
+								let expr = p.parse_expression(mode)?;
+								range = merge_range!(range, &expr.1);
+								args.push(expr);
+								peek!(p, TokenType::Comma, else break);
+							}
+						}
+						let l_range = left.1.clone();
+						Ok(Expression(
+							ExpressionType::Call(Call {
+								callee: Box::new(left),
+								args,
+							}),
+							merge_range!(l_range, range, expect!(p, TokenType::RightParen, "expected `)`")),
+						))
+					} else {
+						Err(Diagnostic::new(
+							Level::Error,
+							"unexpected end of file: expected type or `)`",
+						))
+					}
+				},
+				precedence::CALL,
+			)),
 		}),
 		TokenType::LeftBracket => Some(&ParseRule {
 			prefix: Some(&|p, mode| p.parse_array(mode)),
 			infix: Some((
 				&|p, left, mode| {
 					let index = p.parse_expression(mode)?;
-					Ok(Expression(
-						ExpressionType::Index(Box::new(left), Box::new(index)),
-						expect!(p, TokenType::RightBracket, "expected `]`"),
-					))
+					if mode != ExpressionParseMode::Template {
+						Ok(Expression(
+							ExpressionType::Index(Index {
+								array: Box::new(left),
+								index: Box::new(index),
+							}),
+							expect!(p, TokenType::RightBracket, "expected `]`"),
+						))
+					} else {
+						Err(Diagnostic::new(
+							Level::Error,
+							"an array expression is not allowed in template expressions",
+						)
+						.add_label(Label::primary(p.file, "unexpected expression", index.1)))
+					}
 				},
 				precedence::CALL,
 			)),
@@ -933,22 +1194,162 @@ fn get_parse_rule(token: &TokenType) -> Option<&'static ParseRule> {
 			prefix: None,
 			infix: Some((
 				&|p, left, mode| {
-					if let ExpressionType::Access(path) = left.0 {
-						let expr = p.parse_expression(mode)?;
-						let range = expr.1.clone();
-						Ok(Expression(ExpressionType::Assignment(path, Box::new(expr)), range))
-					} else {
-						Err(
-							Diagnostic::new(Level::Error, "expected assignment target").add_label(Label::primary(
-								p.file,
-								"cannot assign to `expr`",
-								left.1,
-							)),
-						)
-					}
+					let expr = p.parse_expression(mode)?;
+					let range = merge_range!(&left.1, &expr.1);
+					Ok(Expression(
+						ExpressionType::Assignment(Assignment {
+							variable: Box::new(left),
+							value: Box::new(expr),
+						}),
+						range,
+					))
 				},
 				precedence::CALL,
 			)),
+		}),
+		TokenType::LeftBrace => Some(&ParseRule {
+			prefix: Some(&|p, mode| {
+				let tok = next!(p);
+				let block = p.parse_block(mode)?;
+				Ok(Expression(ExpressionType::Block(block.0), merge_range!(tok.1, block.1)))
+			}),
+			infix: None,
+		}),
+		TokenType::If => Some(&ParseRule {
+			prefix: Some(&|p, mode| {
+				let if_tok = next!(p);
+				let mut range = if_tok.1;
+				let mut chain = IfChain {
+					ifs: vec![{
+						let expr = Box::new(p.parse_expression(mode)?);
+						expect!(p, TokenType::LeftBrace, "expected `block` after `if` condition");
+						let block = p.parse_block(mode)?;
+						range = merge_range!(range, block.1);
+						(expr, block.0, range.clone())
+					}],
+					else_part: None,
+				};
+
+				while let Some(tok) = p.peek() {
+					if let TokenType::Else = tok.0 {
+						p.next();
+						let next = next!(p);
+						match next.0 {
+							TokenType::LeftBrace => {
+								chain.else_part = Some({
+									let block = p.parse_block(mode)?;
+									range = merge_range!(range, block.1.clone());
+									(block.0, merge_range!(tok.1, block.1))
+								})
+							},
+							TokenType::If => {
+								let else_if = {
+									let expr = Box::new(p.parse_expression(mode)?);
+									expect!(p, TokenType::LeftBrace, "expected `block` after `if` condition");
+									let block = p.parse_block(mode)?;
+									range = merge_range!(range, block.1.clone());
+									(expr, block.0, merge_range!(tok.1, block.1))
+								};
+								if let Some(else_part) = &chain.else_part {
+									return Err(Diagnostic::new(Level::Error, "cannot have `else if` after `else`")
+										.add_label(Label::secondary(p.file, "move this...", else_part.1.clone()))
+										.add_label(Label::secondary(p.file, "after this", else_if.2)));
+								} else {
+									chain.ifs.push(else_if)
+								}
+							},
+							_ => {
+								return Err(Diagnostic::new(
+									Level::Error,
+									"expected `else if` or else block after `else`",
+								)
+								.add_label(Label::unexpected(p.file, &next)))
+							},
+						}
+					} else {
+						break;
+					}
+				}
+
+				Ok(Expression(ExpressionType::IfChain(chain), range))
+			}),
+			infix: None,
+		}),
+		TokenType::Function => Some(&ParseRule {
+			prefix: Some(&|p, mode| {
+				let range = next!(p).1;
+				let func = p.parse_function(mode)?;
+				Ok(Expression(
+					ExpressionType::Function(func.0),
+					merge_range!(range, func.1),
+				))
+			}),
+			infix: None,
+		}),
+		TokenType::Return => Some(&ParseRule {
+			prefix: Some(&|p, mode| {
+				let tok = next!(p);
+				let range;
+				let value = p.parse_expression(mode);
+				let value = if let Ok(expr) = value {
+					range = merge_range!(tok.1, &expr.1);
+					Some(Box::new(expr))
+				} else {
+					range = tok.1;
+					None
+				};
+
+				Ok(Expression(ExpressionType::Return(value), range))
+			}),
+			infix: None,
+		}),
+		TokenType::Break => Some(&ParseRule {
+			prefix: Some(&|p, mode| {
+				let tok = next!(p);
+				let range;
+				let value = p.parse_expression(mode);
+				let value = if let Ok(expr) = value {
+					range = merge_range!(tok.1, &expr.1);
+					Some(Box::new(expr))
+				} else {
+					range = tok.1;
+					None
+				};
+
+				Ok(Expression(ExpressionType::Break(value), range))
+			}),
+			infix: None,
+		}),
+		TokenType::Switch => Some(&ParseRule {
+			prefix: Some(&|p, mode| {
+				let tok = next!(p);
+				let on = p.parse_expression(mode)?;
+				expect!(p, TokenType::LeftBrace, "expected `{`");
+				let mut cases = Vec::new();
+				let next = next!(p);
+				if let TokenType::RightBrace = next.0 {
+					Ok(Expression(ExpressionType::Switch(cases), merge_range!(tok.1, next.1)))
+				} else {
+					loop {
+						let value = p.parse_expression(mode)?;
+						expect!(p, TokenType::Arrow, "expected `->`");
+						let code = p.parse_expression(mode)?;
+
+						cases.push(Case {
+							value: Box::new(value),
+							code: Box::new(code),
+						});
+
+						peek!(p, TokenType::Comma, else break);
+					}
+
+					Ok(Expression(
+						ExpressionType::Switch(cases),
+						merge_range!(tok.1, expect!(p, TokenType::RightBrace, "expected `}`")),
+					))
+				}
+			}),
+			infix: None,
 		}),
 		_ => None,
 	}
@@ -972,5 +1373,4 @@ mod precedence {
 	pub const FACTOR: usize = 7;
 	pub const UNARY: usize = 8;
 	pub const CALL: usize = 9;
-	pub const PRIMARY: usize = 10;
 }

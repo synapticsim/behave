@@ -23,15 +23,22 @@ pub struct LOD {
 pub struct LODs(pub Vec<LOD>, pub Range<usize>);
 
 #[derive(Debug)]
-pub struct Behaviors(pub Range<usize>);
+pub struct Behaviors(pub Vec<Expression>, pub Range<usize>);
 
 #[derive(Debug)]
 pub enum ItemType {
 	Function(Ident, Function),
-	Variable(Ident, Option<Type>, Option<Expression>),
+	Variable(Variable),
 	Template(Template),
 	Struct(Struct),
 	Enum(Enum),
+}
+
+#[derive(Debug)]
+pub struct Variable {
+	pub name: Ident,
+	pub ty: Option<Type>,
+	pub value: Option<Expression>,
 }
 
 #[derive(Debug)]
@@ -66,7 +73,7 @@ pub struct FunctionType {
 pub struct Template {
 	pub name: Ident,
 	pub args: VarEntry,
-	pub block: Block,
+	pub block: Vec<Expression>,
 }
 
 #[derive(Debug)]
@@ -77,7 +84,6 @@ pub enum TypeType {
 	Code,
 	User(Ident),
 	Array(Box<Type>),
-	Tuple(Vec<Type>),
 	Function(FunctionType),
 	Optional(Box<Type>),
 }
@@ -100,19 +106,17 @@ pub enum ExpressionType {
 	Boolean(bool),
 	Block(Block),
 	Function(Function),
-	Tuple(Vec<Expression>),
 	Code(Block),
 	Array(Vec<Expression>),
 	Access(Path),
-	RPNAccess(String),
-	Index(Box<Expression>, Box<Expression>),
-	Assignment(Path, Box<Expression>),
-	RPNAssignment(String, Box<Expression>),
+	RPNAccess(Box<Expression>),
+	Index(Index),
+	Assignment(Assignment),
 	Unary(UnaryOperator, Box<Expression>),
 	Binary(Box<Expression>, BinaryOperator, Box<Expression>),
 	Call(Call),
 	IfChain(IfChain),
-	Switch(Vec<(Box<Expression>, Block)>),
+	Switch(Vec<Case>),
 	While(While),
 	For(For),
 	Return(Option<Box<Expression>>),
@@ -145,21 +149,39 @@ pub enum BinaryOperator {
 }
 
 #[derive(Debug)]
+pub struct Index {
+	pub array: Box<Expression>,
+	pub index: Box<Expression>,
+}
+
+#[derive(Debug)]
+pub struct Assignment {
+	pub variable: Box<Expression>,
+	pub value: Box<Expression>,
+}
+
+#[derive(Debug)]
+pub struct Case {
+	pub value: Box<Expression>,
+	pub code: Box<Expression>,
+}
+
+#[derive(Debug)]
 pub struct Block {
 	pub statements: Vec<Statement>,
-	pub expression: Box<Expression>,
+	pub expression: Option<Box<Expression>>,
 }
 
 #[derive(Debug)]
 pub struct Call {
-	callee: Box<Expression>,
-	args: Vec<Expression>,
+	pub callee: Box<Expression>,
+	pub args: Vec<Expression>,
 }
 
 #[derive(Debug)]
 pub struct IfChain {
-	pub ifs: Vec<(Box<Expression>, Block)>,
-	pub else_part: Option<Block>,
+	pub ifs: Vec<(Box<Expression>, Block, Range<usize>)>,
+	pub else_part: Option<(Block, Range<usize>)>,
 }
 
 #[derive(Debug)]
@@ -185,7 +207,7 @@ pub struct Function {
 #[derive(Debug)]
 pub enum StatementType {
 	Expression(ExpressionType),
-	Item(ItemType),
+	Declaration(Variable),
 }
 
 #[derive(Debug)]

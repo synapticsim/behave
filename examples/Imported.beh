@@ -1,19 +1,1 @@
-let LODLevels = [
-    0, 50, 100
-];
 
-enum Hello {
-    Hello,
-    Bye = 2
-}
-
-struct Friend {
-    name: str,
-    age: num?
-}
-
-struct AStruct {
-    name: str,
-    friends: [Friend],
-    add_friend: fn(str) -> Friend
-}

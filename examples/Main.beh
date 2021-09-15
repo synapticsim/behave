@@ -1,7 +1,10 @@
 import Imported;
 
 lods {
-    Imported.LODLevels[0] -> "LOD 2",
-    Imported.LODLevels[1] -> "LOD 1",
-    Imported.LODLevels[2] -> "LOD 0"
+    0 -> "LOD 2",
+    50 -> "LOD 1",
+    100 -> "LOD 0",
+    110 -> fn(a: str) { a == "true" }
 }
+
+behavior {}
