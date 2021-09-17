@@ -7,11 +7,11 @@ lods {
 }
 
 behavior {
-    use Imported.Elevators {
-        id: Imported.ElevatorID.Left
+    use Elevators {
+        id: ElevatorID.Left
     }
 
-    use Imported.Elevators {
-        id: Imported.ElevatorID.Left
+    use Elevators {
+        id: ElevatorID.Left
     }
 }

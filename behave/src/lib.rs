@@ -6,6 +6,7 @@ use lexer::Lexer;
 use parser::{Parser, ParserMode};
 
 use crate::diagnostic::Label;
+use crate::ast::Path;
 
 mod ast;
 pub mod diagnostic;
@@ -54,12 +55,13 @@ where
 
 fn recursive_parse<F>(
 	source_name: impl AsRef<str>, source: impl AsRef<str>, mode: ParserMode, import_resolver: &mut F,
-	asts: &mut HashMap<String, AST>, diagnostics: &mut Vec<Diagnostic>,
+	asts: &mut HashMap<Vec<String>, AST>, diagnostics: &mut Vec<Diagnostic>,
 ) -> bool
 where
 	F: FnMut(&str) -> Result<String, (String, Error)>,
 {
-	if !asts.contains_key(source_name.as_ref()) {
+	let path = source_name_to_path(source_name.as_ref());
+	if !asts.contains_key(&path) {
 		if let Some(ast) = Parser::new(
 			mode,
 			source_name.as_ref(),
@@ -70,17 +72,7 @@ where
 		{
 			for import in &ast.imports {
 				if let ImportType::Normal(path) = &import.0 {
-					let path_string = {
-						let mut s = String::new();
-						let mut iter = path.0.iter().map(|i| &i.0);
-						s += iter.next().unwrap();
-						while let Some(p) = iter.next() {
-							s += ".";
-							s += p;
-						}
-
-						s
-					};
+					let path_string = path_to_source_name(path);
 
 					match import_resolver(&path_string) {
 						Ok(source) => {
@@ -106,7 +98,7 @@ where
 				}
 			}
 
-			asts.insert(source_name.as_ref().to_string(), ast);
+			asts.insert(path, ast);
 
 			true
 		} else {
@@ -115,4 +107,20 @@ where
 	} else {
 		true
 	}
+}
+
+fn source_name_to_path(name: &str) -> Vec<String> {
+	name.split('.').map(|s| s.to_string()).collect()
+}
+
+fn path_to_source_name(path: &Path) -> String {
+	let mut s = String::new();
+	let mut iter = path.0.iter().map(|i| &i.0);
+	s += iter.next().unwrap();
+	while let Some(p) = iter.next() {
+		s += ".";
+		s += p;
+	}
+
+	s
 }
