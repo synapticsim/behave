@@ -1,1 +1,26 @@
+enum ElevatorID {
+    Left,
+    Right
+}
 
+fn elevator_id_to_string(id: ElevatorID) -> str {
+    switch id {
+        ElevatorID.Left -> "Left",
+        ElevatorID.Right -> "Right"
+    }
+}
+
+template Elevators(id: ElevatorID) {
+    let name = format("Elevator_{}", elevator_id_to_string(id));
+
+    component name on name {
+        animation name {
+            length: 100,
+            lag: 50,
+            value: @{
+                let position = @"A:ELEVATOR DEFLECTION PCT, percent over 100";
+                position * 0.5 + 0.5
+            }
+        }
+    }
+}

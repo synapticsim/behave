@@ -1,10 +1,11 @@
 use std::{iter::Peekable, ops::Range};
 
+use crate::ast::{Component, Animation};
 use crate::{
 	ast::{
 		ASTType,
 		Assignment,
-		Behaviors,
+		Behavior,
 		BinaryOperator,
 		Block,
 		Call,
@@ -27,9 +28,12 @@ use crate::{
 		Statement,
 		StatementType,
 		Struct,
+		Switch,
+		Template,
 		Type,
 		TypeType,
 		UnaryOperator,
+		Use,
 		VarEntry,
 		Variable,
 		AST,
@@ -247,7 +251,7 @@ impl Parser<'_> {
 		let mut ast = AST {
 			imports: Vec::new(),
 			ast_data: match self.mode {
-				ParserMode::MainFile => ASTType::Main(LODs(Vec::new(), no_range()), Behaviors(Vec::new(), no_range())),
+				ParserMode::MainFile => ASTType::Main(LODs(Vec::new(), no_range()), Behavior(Vec::new(), no_range())),
 				ParserMode::ImportedFile => ASTType::Secondary(Vec::new()),
 			},
 		};
@@ -306,7 +310,7 @@ impl Parser<'_> {
 				},
 				TokenType::Behavior => match ast.ast_data {
 					ASTType::Main(_, ref mut behaviors) => {
-						*behaviors = resync!(self, self.parse_behaviors(), until TokenType::RightBrace, else {
+						*behaviors = resync!(self, self.parse_behavior(), until TokenType::RightBrace, else {
 							error = true;
 							continue 'w;
 						});
@@ -315,7 +319,7 @@ impl Parser<'_> {
 					ASTType::Secondary(..) => {
 						error = true;
 						let behaviors =
-							resync!(self, self.parse_behaviors(), until TokenType::RightBrace, else continue 'w);
+							resync!(self, self.parse_behavior(), until TokenType::RightBrace, else continue 'w);
 						self.diagnostics.push(
 							Diagnostic::new(Level::Error, "Behavior description is only allowed in the main file")
 								.add_label(Label::primary(
@@ -324,6 +328,29 @@ impl Parser<'_> {
 									merge_range!(token.1, behaviors.1),
 								)),
 						);
+					},
+				},
+				TokenType::Template => match ast.ast_data {
+					ASTType::Main(..) => {
+						error = true;
+						let template =
+							resync!(self, self.parse_template(), until TokenType::RightBrace, else continue 'w);
+						self.diagnostics.push(
+							Diagnostic::new(Level::Error, "Template definition is only allowed in imported files")
+								.add_label(Label::primary(
+									self.file,
+									"move this to the imported `.beh` file",
+									merge_range!(token.1, template.1),
+								)),
+						);
+					},
+					ASTType::Secondary(ref mut items) => {
+						let mut template = resync!(self, self.parse_template(), until TokenType::RightBrace, else {
+							error = true;
+							continue 'w;
+						});
+						template.1 = merge_range!(token.1, &template.1);
+						items.push(Item(ItemType::Template(template.0), template.1));
 					},
 				},
 				TokenType::Enum => match ast.ast_data {
@@ -475,13 +502,34 @@ impl Parser<'_> {
 		Ok(lods)
 	}
 
-	fn parse_behaviors(&mut self) -> Result<Behaviors, Diagnostic> {
-		let mut behaviors = Behaviors(Vec::new(), no_range());
-		behaviors.1 = merge_range!(
-			expect!(self, TokenType::LeftBrace, "expected `{`"),
-			expect!(self, TokenType::RightBrace, "expected `}`")
-		);
-		Ok(behaviors)
+	fn parse_behavior(&mut self) -> Result<Behavior, Diagnostic> {
+		let statements = self.parse_template_block()?;
+		Ok(Behavior(statements.0, statements.1))
+	}
+
+	fn parse_template(&mut self) -> Result<(Template, Range<usize>), Diagnostic> {
+		let mut template = Template {
+			name: self.parse_ident()?,
+			args: Vec::new(),
+			block: Vec::new(),
+		};
+		let mut range = expect!(self, TokenType::LeftParen, "expected `(`");
+		let tok = peek!(self, else return Err(Diagnostic::new(Level::Error, "unexpected end of file: expected `)`")));
+		if let TokenType::RightParen = tok.0 {
+			range = tok.1;
+		} else {
+			loop {
+				let arg = self.parse_var_entry()?;
+				range = merge_range!(range, &arg.range);
+				template.args.push(arg);
+				peek!(self, TokenType::Comma, else break);
+			}
+		}
+		range = merge_range!(range, expect!(self, TokenType::RightParen, "expected `)`"));
+
+		let statements = self.parse_template_block()?;
+		template.block = statements.0;
+		Ok((template, merge_range!(range, statements.1)))
 	}
 
 	fn parse_enum(&mut self) -> Result<Item, Diagnostic> {
@@ -583,11 +631,17 @@ impl Parser<'_> {
 		let name = self.parse_ident()?;
 		expect!(self, TokenType::Colon, "expected `colon`");
 		let ty = self.parse_type()?;
+		let default = peek!(self, TokenType::Equal, if {
+			Some(Box::new(self.parse_expression(ExpressionParseMode::Normal)?))
+		} else {
+			None
+		});
 
 		Ok(VarEntry {
 			range: merge_range!(&name.1, &ty.1),
 			name,
 			ty,
+			default,
 		})
 	}
 
@@ -652,6 +706,66 @@ impl Parser<'_> {
 			},
 			None => ty,
 		})
+	}
+
+	fn parse_template_block(&mut self) -> Result<(Vec<Statement>, Range<usize>), Diagnostic> {
+		let mut statements = Vec::new();
+		let mut range = expect!(self, TokenType::LeftBrace, "expected `{`");
+		let mut tok = peek!(self, else return Err(Diagnostic::new(Level::Error, "unexpected end of file")));
+		if let TokenType::RightBrace = tok.0 {
+			self.next();
+			range = tok.1;
+			Ok((statements, range))
+		} else {
+			loop {
+				match tok.0 {
+					TokenType::Let => {
+						self.next();
+						let item = self.parse_variable(ExpressionParseMode::Normal)?;
+						range = merge_range!(range, &item.1);
+						statements.push(Statement(StatementType::Declaration(item.0), item.1));
+					},
+					_ => {
+						let expr = self.parse_expression(ExpressionParseMode::Template)?;
+						range = merge_range!(range, &expr.1);
+						statements.push(Statement(StatementType::Expression(expr.0), expr.1))
+					},
+				}
+
+				let next = if let Some(tok) = self.peek() {
+					tok
+				} else {
+					return Err(Diagnostic::new(Level::Error, "unexpected end of file"));
+				};
+				match &next.0 {
+					TokenType::RightBrace => {
+						range = merge_range!(range, next.1);
+						self.next();
+						break;
+					},
+					_ => tok = next,
+				}
+			}
+
+			Ok((statements, range))
+		}
+	}
+
+	fn parse_template_values(&mut self) -> Result<(Vec<(Ident, Expression)>, Range<usize>), Diagnostic> {
+		let range = expect!(self, TokenType::LeftBrace, "expected `{`");
+		let mut args = Vec::new();
+		loop {
+			let arg = self.parse_ident()?;
+			expect!(self, TokenType::Colon, "expected `colon`");
+			let value = self.parse_expression(ExpressionParseMode::Normal)?;
+			args.push((arg, value));
+
+			peek!(self, TokenType::Comma, else break);
+		}
+		Ok((
+			args,
+			merge_range!(range, expect!(self, TokenType::RightBrace, "expected `}`")),
+		))
 	}
 
 	fn parse_expression(&mut self, mode: ExpressionParseMode) -> Result<Expression, Diagnostic> {
@@ -1149,31 +1263,29 @@ fn get_parse_rule(token: &TokenType) -> Option<&'static ParseRule> {
 		TokenType::RightChevron => Some(&ParseRule {
 			prefix: None,
 			infix: Some((
-				&|p, left, mode| p.parse_binary(BinaryOperator::Greater, precedence::COMPARISION, left, mode),
-				precedence::COMPARISION,
+				&|p, left, mode| p.parse_binary(BinaryOperator::Greater, precedence::COMPARISON, left, mode),
+				precedence::COMPARISON,
 			)),
 		}),
 		TokenType::LeftChevron => Some(&ParseRule {
 			prefix: None,
 			infix: Some((
-				&|p, left, mode| p.parse_binary(BinaryOperator::Lesser, precedence::COMPARISION, left, mode),
-				precedence::COMPARISION,
+				&|p, left, mode| p.parse_binary(BinaryOperator::Lesser, precedence::COMPARISON, left, mode),
+				precedence::COMPARISON,
 			)),
 		}),
 		TokenType::RightChevronEqual => Some(&ParseRule {
 			prefix: None,
 			infix: Some((
-				&|p, left, mode| {
-					p.parse_binary(BinaryOperator::GreaterThanOrEqual, precedence::COMPARISION, left, mode)
-				},
-				precedence::COMPARISION,
+				&|p, left, mode| p.parse_binary(BinaryOperator::GreaterThanOrEqual, precedence::COMPARISON, left, mode),
+				precedence::COMPARISON,
 			)),
 		}),
 		TokenType::LeftChevronEqual => Some(&ParseRule {
 			prefix: None,
 			infix: Some((
-				&|p, left, mode| p.parse_binary(BinaryOperator::LesserThanOrEqual, precedence::COMPARISION, left, mode),
-				precedence::COMPARISION,
+				&|p, left, mode| p.parse_binary(BinaryOperator::LesserThanOrEqual, precedence::COMPARISON, left, mode),
+				precedence::COMPARISON,
 			)),
 		}),
 		TokenType::Or => Some(&ParseRule {
@@ -1326,9 +1438,16 @@ fn get_parse_rule(token: &TokenType) -> Option<&'static ParseRule> {
 				let on = p.parse_expression(mode)?;
 				expect!(p, TokenType::LeftBrace, "expected `{`");
 				let mut cases = Vec::new();
-				let next = next!(p);
+				let next = peek!(p, else return Err(Diagnostic::new(Level::Error, "unexpected end of file")));
 				if let TokenType::RightBrace = next.0 {
-					Ok(Expression(ExpressionType::Switch(cases), merge_range!(tok.1, next.1)))
+					p.next();
+					Ok(Expression(
+						ExpressionType::Switch(Switch {
+							on: Box::new(on),
+							cases,
+						}),
+						merge_range!(tok.1, next.1),
+					))
 				} else {
 					loop {
 						let value = p.parse_expression(mode)?;
@@ -1344,10 +1463,86 @@ fn get_parse_rule(token: &TokenType) -> Option<&'static ParseRule> {
 					}
 
 					Ok(Expression(
-						ExpressionType::Switch(cases),
+						ExpressionType::Switch(Switch {
+							on: Box::new(on),
+							cases,
+						}),
 						merge_range!(tok.1, expect!(p, TokenType::RightBrace, "expected `}`")),
 					))
 				}
+			}),
+			infix: None,
+		}),
+		TokenType::Use => Some(&ParseRule {
+			prefix: Some(&|p, _| {
+				let range = next!(p).1;
+				let path = p.parse_path()?;
+				let range = merge_range!(range, path.1.clone());
+				let mut usee = Use {
+					template: path,
+					args: Vec::new(),
+				};
+				peek!(p, TokenType::Semicolon, if {
+					return Ok(Expression(ExpressionType::Use(usee), range))
+				});
+
+				let args = p.parse_template_values()?;
+				usee.args = args.0;
+
+				Ok(Expression(ExpressionType::Use(usee), merge_range!(range, args.1)))
+			}),
+			infix: None,
+		}),
+		TokenType::Component => Some(&ParseRule {
+			prefix: Some(&|p, _| {
+				let range = next!(p).1;
+				let name = p.parse_expression(ExpressionParseMode::Normal)?;
+				let node = peek!(p, TokenType::On, if {
+					Some(Box::new(p.parse_expression(ExpressionParseMode::Normal)?))
+				} else {
+					None
+				});
+				let statements = p.parse_template_block()?;
+				Ok(Expression(
+					ExpressionType::Component(Component {
+						name: Box::new(name),
+						node,
+						block: statements.0,
+					}),
+					merge_range!(range, statements.1),
+				))
+			}),
+			infix: None,
+		}),
+		TokenType::Animation => Some(&ParseRule {
+			prefix: Some(&|p, _| {
+				let range = next!(p).1;
+				let name = p.parse_expression(ExpressionParseMode::Normal)?;
+				let args = p.parse_template_values()?;
+				let range = merge_range!(range, args.1);
+				let mut args_iter = args.0.into_iter();
+				let length = if let Some(length) = args_iter.find(|val| val.0.0 == "length") {
+					length
+				} else {
+					return Err(Diagnostic::new(Level::Error, "expected animation length").add_label(Label::primary(p.file, "here", range)));
+				};
+				let lag = if let Some(lag) = args_iter.find(|val| val.0.0 == "lag") {
+					lag
+				} else {
+					return Err(Diagnostic::new(Level::Error, "expected animation lag").add_label(Label::primary(p.file, "here", range)));
+				};
+				let code = if let Some(code) = args_iter.find(|val| val.0.0 == "value") {
+					code
+				} else {
+					return Err(Diagnostic::new(Level::Error, "expected animation code").add_label(Label::primary(p.file, "here", range)));
+				};
+
+				Ok(Expression(ExpressionType::Animation(Animation {
+					name: Box::new(name),
+					length: Box::new(length.1),
+					lag: Box::new(lag.1),
+					code: Box::new(code.1),
+				}), range))
 			}),
 			infix: None,
 		}),
@@ -1368,7 +1563,7 @@ mod precedence {
 	pub const OR: usize = 2;
 	pub const AND: usize = 3;
 	pub const EQUALITY: usize = 4;
-	pub const COMPARISION: usize = 5;
+	pub const COMPARISON: usize = 5;
 	pub const TERM: usize = 6;
 	pub const FACTOR: usize = 7;
 	pub const UNARY: usize = 8;

@@ -3,8 +3,15 @@ import Imported;
 lods {
     0 -> "LOD 2",
     50 -> "LOD 1",
-    100 -> "LOD 0",
-    110 -> fn(a: str) { a == "true" }
+    100 -> "LOD 0"
 }
 
-behavior {}
+behavior {
+    use Imported.Elevators {
+        id: Imported.ElevatorID.Left
+    }
+
+    use Imported.Elevators {
+        id: Imported.ElevatorID.Left
+    }
+}

@@ -2,7 +2,7 @@ use std::ops::Range;
 
 #[derive(Debug)]
 pub enum ASTType {
-	Main(LODs, Behaviors),
+	Main(LODs, Behavior),
 	Secondary(Vec<Item>),
 }
 
@@ -23,7 +23,7 @@ pub struct LOD {
 pub struct LODs(pub Vec<LOD>, pub Range<usize>);
 
 #[derive(Debug)]
-pub struct Behaviors(pub Vec<Expression>, pub Range<usize>);
+pub struct Behavior(pub Vec<Statement>, pub Range<usize>);
 
 #[derive(Debug)]
 pub enum ItemType {
@@ -72,8 +72,8 @@ pub struct FunctionType {
 #[derive(Debug)]
 pub struct Template {
 	pub name: Ident,
-	pub args: VarEntry,
-	pub block: Vec<Expression>,
+	pub args: Vec<VarEntry>,
+	pub block: Vec<Statement>,
 }
 
 #[derive(Debug)]
@@ -95,6 +95,7 @@ pub struct Type(pub TypeType, pub Range<usize>);
 pub struct VarEntry {
 	pub name: Ident,
 	pub ty: Type,
+	pub default: Option<Box<Expression>>,
 	pub range: Range<usize>,
 }
 
@@ -116,11 +117,14 @@ pub enum ExpressionType {
 	Binary(Box<Expression>, BinaryOperator, Box<Expression>),
 	Call(Call),
 	IfChain(IfChain),
-	Switch(Vec<Case>),
+	Switch(Switch),
 	While(While),
 	For(For),
 	Return(Option<Box<Expression>>),
 	Break(Option<Box<Expression>>),
+	Use(Use),
+	Component(Component),
+	Animation(Animation),
 }
 
 #[derive(Debug)]
@@ -158,6 +162,12 @@ pub struct Index {
 pub struct Assignment {
 	pub variable: Box<Expression>,
 	pub value: Box<Expression>,
+}
+
+#[derive(Debug)]
+pub struct Switch {
+	pub on: Box<Expression>,
+	pub cases: Vec<Case>,
 }
 
 #[derive(Debug)]
@@ -202,6 +212,27 @@ pub struct Function {
 	pub params: Vec<VarEntry>,
 	pub ret: Option<Type>,
 	pub block: Block,
+}
+
+#[derive(Debug)]
+pub struct Use {
+	pub template: Path,
+	pub args: Vec<(Ident, Expression)>,
+}
+
+#[derive(Debug)]
+pub struct Component {
+	pub name: Box<Expression>,
+	pub node: Option<Box<Expression>>,
+	pub block: Vec<Statement>,
+}
+
+#[derive(Debug)]
+pub struct Animation {
+	pub name: Box<Expression>,
+	pub length: Box<Expression>,
+	pub lag: Box<Expression>,
+	pub code: Box<Expression>,
 }
 
 #[derive(Debug)]
