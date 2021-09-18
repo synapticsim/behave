@@ -12,13 +12,13 @@ use crate::{
 };
 
 pub struct Lexer<'a> {
-	file: &'a str,
+	file: &'a [String],
 	source: Peekable<CharIndices<'a>>,
 	source_raw: &'a str,
 }
 
 impl<'a> Lexer<'a> {
-	pub fn new(file: &'a str, source: &'a str) -> Self {
+	pub fn new(file: &'a [String], source: &'a str) -> Self {
 		Self {
 			file,
 			source: source.char_indices().peekable(),

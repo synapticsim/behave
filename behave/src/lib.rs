@@ -1,12 +1,8 @@
-use std::{collections::HashMap, io::Error};
-
-use ast::{ImportType, AST};
 use diagnostic::{Diagnostic, Level};
 use lexer::Lexer;
 use parser::{Parser, ParserMode};
 
-use crate::diagnostic::Label;
-use crate::ast::Path;
+use crate::ast::ASTTree;
 
 mod ast;
 pub mod diagnostic;
@@ -22,105 +18,83 @@ pub struct CompileResult {
 	pub diagnostics: Vec<Diagnostic>,
 }
 
-/// Compile a `behave` file.
+#[derive(Debug)]
+/// A `behave` source file.
+pub struct SourceFile {
+	/// The path of the source file.
+	pub path: Vec<String>,
+	/// The contents of the source file.
+	pub contents: String,
+}
+
+/// Compile a `behave` project.
 ///
 /// # Parameters:
-/// `source_name`: The name of the source file.
-/// `source`: The contents of the source file.
-/// `import_resolver`: The resolver of imported files. It receives the import path, and should return the contents of
-/// the imported file.
-pub fn compile<F>(source_name: impl AsRef<str>, source: impl AsRef<str>, mut import_resolver: F) -> CompileResult
-where
-	F: FnMut(&str) -> Result<String, (String, Error)>,
-{
+/// `main_file`: The main file of the project.
+/// `files`: Slice of all the other files in the project.
+pub fn compile(main_file: &SourceFile, files: &[SourceFile]) -> CompileResult {
 	let mut diagnostics = Vec::new();
-	let mut asts = HashMap::new();
 
-	recursive_parse(
-		source_name,
-		source,
+	let main = match Parser::new(
 		ParserMode::MainFile,
-		&mut import_resolver,
-		&mut asts,
+		&main_file.path,
+		Lexer::new(&main_file.path, &main_file.contents),
 		&mut diagnostics,
-	);
+	)
+	.parse()
+	{
+		Some(ast) => ast,
+		None => {
+			return CompileResult {
+				compiled: None,
+				diagnostics,
+			}
+		},
+	};
 
-	println!("{:#?}", asts);
+	println!("Main: {:#?}", main);
+
+	let mut tree = ASTTree::new();
+	for file in files {
+		if !tree.add_ast(
+			&file.path,
+			match Parser::new(
+				ParserMode::ImportedFile,
+				&file.path,
+				Lexer::new(&file.path, &file.contents),
+				&mut diagnostics,
+			)
+			.parse()
+			{
+				Some(ast) => ast,
+				None => {
+					return CompileResult {
+						compiled: None,
+						diagnostics,
+					}
+				},
+			},
+		) {
+			diagnostics.push(Diagnostic::new(
+				Level::Error,
+				format!("file '{}' is invalid", {
+					let mut s = String::new();
+					let mut iter = file.path.iter();
+					s += &iter.next().unwrap();
+					while let Some(p) = iter.next() {
+						s.push('.');
+						s += &p;
+					}
+					s
+				}),
+			))
+		}
+	}
+
+	println!("Others: {:#?}", tree);
 
 	CompileResult {
 		compiled: None,
 		diagnostics,
 	}
-}
-
-fn recursive_parse<F>(
-	source_name: impl AsRef<str>, source: impl AsRef<str>, mode: ParserMode, import_resolver: &mut F,
-	asts: &mut HashMap<Vec<String>, AST>, diagnostics: &mut Vec<Diagnostic>,
-) -> bool
-where
-	F: FnMut(&str) -> Result<String, (String, Error)>,
-{
-	let path = source_name_to_path(source_name.as_ref());
-	if !asts.contains_key(&path) {
-		if let Some(ast) = Parser::new(
-			mode,
-			source_name.as_ref(),
-			Lexer::new(source_name.as_ref(), source.as_ref()),
-			diagnostics,
-		)
-		.parse()
-		{
-			for import in &ast.imports {
-				if let ImportType::Normal(path) = &import.0 {
-					let path_string = path_to_source_name(path);
-
-					match import_resolver(&path_string) {
-						Ok(source) => {
-							if !recursive_parse(
-								&path_string,
-								source,
-								ParserMode::ImportedFile,
-								import_resolver,
-								asts,
-								diagnostics,
-							) {
-								return false;
-							}
-						},
-						Err(err) => {
-							diagnostics.push(
-								Diagnostic::new(Level::Error, format!("failed to import file `{}`: {}", err.0, err.1))
-									.add_label(Label::primary(source_name.as_ref(), "imported here", path.1.clone())),
-							);
-							return false;
-						},
-					}
-				}
-			}
-
-			asts.insert(path, ast);
-
-			true
-		} else {
-			false
-		}
-	} else {
-		true
-	}
-}
-
-fn source_name_to_path(name: &str) -> Vec<String> {
-	name.split('.').map(|s| s.to_string()).collect()
-}
-
-fn path_to_source_name(path: &Path) -> String {
-	let mut s = String::new();
-	let mut iter = path.0.iter().map(|i| &i.0);
-	s += iter.next().unwrap();
-	while let Some(p) = iter.next() {
-		s += ".";
-		s += p;
-	}
-
-	s
 }

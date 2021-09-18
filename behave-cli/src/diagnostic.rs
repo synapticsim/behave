@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use behave::diagnostic::{Diagnostic, LabelType, Level};
+use behave::SourceFile;
 use codespan_reporting::{
 	diagnostic::{self, Label, LabelStyle, Severity},
 	files::SimpleFiles,
@@ -11,12 +12,27 @@ use codespan_reporting::{
 	},
 };
 
-pub fn display_diagnostics(file_map: HashMap<String, String>, diagnostics: Vec<Diagnostic>) {
+pub fn display_diagnostics(file_map: Vec<SourceFile>, diagnostics: Vec<Diagnostic>) {
 	let (files, id_map) = {
 		let mut files = SimpleFiles::new();
 		let mut id_map = HashMap::new();
-		for pair in file_map {
-			id_map.insert(pair.0.clone(), files.add(pair.0, pair.1));
+		for file in file_map {
+			id_map.insert(
+				file.path.clone(),
+				files.add(
+					{
+						let mut s = String::new();
+						let mut iter = file.path.into_iter();
+						s += &iter.next().unwrap();
+						while let Some(p) = iter.next() {
+							s.push('.');
+							s += &p;
+						}
+						s
+					},
+					file.contents,
+				),
+			);
 		}
 
 		(files, id_map)

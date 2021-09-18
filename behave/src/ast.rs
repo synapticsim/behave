@@ -1,4 +1,30 @@
+use std::collections::HashMap;
 use std::ops::Range;
+
+#[derive(Debug)]
+pub enum ASTTree {
+	Branch(HashMap<String, ASTTree>),
+	Leaf(AST),
+}
+
+impl ASTTree {
+	pub fn new() -> Self { Self::Branch(HashMap::new()) }
+
+	pub fn add_ast(&mut self, path: &[String], ast: AST) -> bool {
+		match self {
+			Self::Branch(ref mut map) => {
+				if path.len() == 1 {
+					map.insert(path[0].clone(), ASTTree::Leaf(ast));
+					true
+				} else {
+					let tree = map.entry(path[0].clone()).or_insert(ASTTree::new());
+					tree.add_ast(&path[1..], ast)
+				}
+			},
+			_ => false,
+		}
+	}
+}
 
 #[derive(Debug)]
 pub enum ASTType {

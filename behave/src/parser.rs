@@ -1,6 +1,6 @@
 use std::{iter::Peekable, ops::Range};
 
-use crate::ast::{Component, Animation};
+use crate::ast::{Animation, Component};
 use crate::{
 	ast::{
 		ASTType,
@@ -51,7 +51,7 @@ pub enum ParserMode {
 
 pub struct Parser<'a> {
 	mode: ParserMode,
-	file: &'a str,
+	file: &'a [String],
 	lexer: Peekable<Lexer<'a>>,
 	diagnostics: &'a mut Vec<Diagnostic>,
 }
@@ -235,7 +235,7 @@ impl<'a> Parser<'a> {
 
 	parse_literal!(parse_bool, Boolean, "expected boolean literal");
 
-	pub fn new(mode: ParserMode, file: &'a str, lexer: Lexer<'a>, diagnostics: &'a mut Vec<Diagnostic>) -> Self {
+	pub fn new(mode: ParserMode, file: &'a [String], lexer: Lexer<'a>, diagnostics: &'a mut Vec<Diagnostic>) -> Self {
 		Self {
 			mode,
 			file,
@@ -1521,28 +1521,34 @@ fn get_parse_rule(token: &TokenType) -> Option<&'static ParseRule> {
 				let args = p.parse_template_values()?;
 				let range = merge_range!(range, args.1);
 				let mut args_iter = args.0.into_iter();
-				let length = if let Some(length) = args_iter.find(|val| val.0.0 == "length") {
+				let length = if let Some(length) = args_iter.find(|val| val.0 .0 == "length") {
 					length
 				} else {
-					return Err(Diagnostic::new(Level::Error, "expected animation length").add_label(Label::primary(p.file, "here", range)));
+					return Err(Diagnostic::new(Level::Error, "expected animation length")
+						.add_label(Label::primary(p.file, "here", range)));
 				};
-				let lag = if let Some(lag) = args_iter.find(|val| val.0.0 == "lag") {
+				let lag = if let Some(lag) = args_iter.find(|val| val.0 .0 == "lag") {
 					lag
 				} else {
-					return Err(Diagnostic::new(Level::Error, "expected animation lag").add_label(Label::primary(p.file, "here", range)));
+					return Err(Diagnostic::new(Level::Error, "expected animation lag")
+						.add_label(Label::primary(p.file, "here", range)));
 				};
-				let code = if let Some(code) = args_iter.find(|val| val.0.0 == "value") {
+				let code = if let Some(code) = args_iter.find(|val| val.0 .0 == "value") {
 					code
 				} else {
-					return Err(Diagnostic::new(Level::Error, "expected animation code").add_label(Label::primary(p.file, "here", range)));
+					return Err(Diagnostic::new(Level::Error, "expected animation code")
+						.add_label(Label::primary(p.file, "here", range)));
 				};
 
-				Ok(Expression(ExpressionType::Animation(Animation {
-					name: Box::new(name),
-					length: Box::new(length.1),
-					lag: Box::new(lag.1),
-					code: Box::new(code.1),
-				}), range))
+				Ok(Expression(
+					ExpressionType::Animation(Animation {
+						name: Box::new(name),
+						length: Box::new(length.1),
+						lag: Box::new(lag.1),
+						code: Box::new(code.1),
+					}),
+					range,
+				))
 			}),
 			infix: None,
 		}),
