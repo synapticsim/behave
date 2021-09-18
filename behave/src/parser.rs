@@ -1,6 +1,6 @@
 use std::{iter::Peekable, ops::Range};
 
-use crate::ast::{Animation, Component};
+use crate::ast::{Animation, AssignmentTarget, Component};
 use crate::{
 	ast::{
 		ASTType,
@@ -592,13 +592,6 @@ impl Parser<'_> {
 		let name = self.parse_ident()?;
 		let range = name.1.clone();
 		let mut last_range = range.clone();
-		let ty = peek!(self, TokenType::Colon, if {
-			let ty = self.parse_type()?;
-			last_range = ty.1.clone();
-			Some(ty)
-		} else {
-			None
-		});
 		let value = peek!(self, TokenType::Equal, if {
 			let expr = self.parse_expression(mode)?;
 			last_range = expr.1.clone();
@@ -607,7 +600,7 @@ impl Parser<'_> {
 			None
 		});
 		Ok((
-			Variable { name, ty, value },
+			Variable { name, value },
 			merge_range!(&range, {
 				let tok = next!(self);
 				match tok.0 {
@@ -1308,9 +1301,27 @@ fn get_parse_rule(token: &TokenType) -> Option<&'static ParseRule> {
 				&|p, left, mode| {
 					let expr = p.parse_expression(mode)?;
 					let range = merge_range!(&left.1, &expr.1);
+					let target =
+						match left.0 {
+							ExpressionType::Access(path) => AssignmentTarget::Var(path),
+							ExpressionType::RPNAccess(expr) => AssignmentTarget::RPNVar(expr),
+							ExpressionType::Index(index) => {
+								if let ExpressionType::Access(path) = index.array.0 {
+									AssignmentTarget::Index(path, index.index)
+								} else {
+									return Err(Diagnostic::new(Level::Error, "invalid assignment").add_label(
+										Label::primary(p.file, "can only assign directly to arrays", left.1),
+									));
+								}
+							},
+							_ => {
+								return Err(Diagnostic::new(Level::Error, "invalid assignment")
+									.add_label(Label::primary(p.file, "can only assign to variables", left.1)))
+							},
+						};
 					Ok(Expression(
 						ExpressionType::Assignment(Assignment {
-							variable: Box::new(left),
+							target,
 							value: Box::new(expr),
 						}),
 						range,

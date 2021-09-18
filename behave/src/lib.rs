@@ -3,9 +3,11 @@ use lexer::Lexer;
 use parser::{Parser, ParserMode};
 
 use crate::ast::ASTTree;
+use crate::evaluation::evaluate;
 
 mod ast;
 pub mod diagnostic;
+mod evaluation;
 mod lexer;
 mod parser;
 mod token;
@@ -52,8 +54,6 @@ pub fn compile(main_file: &SourceFile, files: &[SourceFile]) -> CompileResult {
 		},
 	};
 
-	println!("Main: {:#?}", main);
-
 	let mut tree = ASTTree::new();
 	for file in files {
 		if !tree.add_ast(
@@ -91,10 +91,8 @@ pub fn compile(main_file: &SourceFile, files: &[SourceFile]) -> CompileResult {
 		}
 	}
 
-	println!("Others: {:#?}", tree);
-
 	CompileResult {
-		compiled: None,
+		compiled: evaluate(&main_file.path, main, tree),
 		diagnostics,
 	}
 }
