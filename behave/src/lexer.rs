@@ -1,3 +1,4 @@
+use std::ops::Range;
 use std::{
 	collections::HashMap,
 	iter::{FusedIterator, Peekable},
@@ -6,6 +7,7 @@ use std::{
 
 use lazy_static::lazy_static;
 
+use crate::ast::Location;
 use crate::{
 	diagnostic::{Diagnostic, Label, Level},
 	token::{Token, TokenType},
@@ -25,6 +27,8 @@ impl<'a> Lexer<'a> {
 			source_raw: source,
 		}
 	}
+
+	fn loc(&self, range: Range<usize>) -> Location<'a> { Location { file: self.file, range } }
 }
 
 impl Lexer<'_> {}
@@ -148,15 +152,10 @@ impl Iterator for Lexer<'_> {
 							TokenType::Diagnostic(
 								Diagnostic::new(Level::Error, "string does not terminate")
 									.add_label(Label::primary(
-										self.file,
 										"the string starts here",
-										start_byte_index..start_byte_index + 1,
+										self.loc(start_byte_index..start_byte_index + 1),
 									))
-									.add_label(Label::secondary(
-										self.file,
-										"but there is a newline here",
-										c.0..c.0 + 1,
-									)),
+									.add_label(Label::secondary("but there is a newline here", self.loc(c.0..c.0 + 1))),
 							),
 							c.0..c.0,
 						));
@@ -171,9 +170,8 @@ impl Iterator for Lexer<'_> {
 				Token(
 					TokenType::Diagnostic(Diagnostic::new(Level::Error, "string does not terminate").add_label(
 						Label::primary(
-							self.file,
 							"the string starts here",
-							start_byte_index..start_byte_index + 1,
+							self.loc(start_byte_index..start_byte_index + 1),
 						),
 					)),
 					c.0..c.0,
@@ -200,7 +198,7 @@ impl Iterator for Lexer<'_> {
 					Err(err) => Token(
 						TokenType::Diagnostic(
 							Diagnostic::new(Level::Error, format!("failed to parse number: {}", err))
-								.add_label(Label::primary(self.file, "", start_byte_index..end_byte_index + 1)),
+								.add_label(Label::primary("", self.loc(start_byte_index..end_byte_index + 1))),
 						),
 						c.0..c.0,
 					),
@@ -230,11 +228,8 @@ impl Iterator for Lexer<'_> {
 			},
 			_ => Token(
 				TokenType::Diagnostic(
-					Diagnostic::new(Level::Error, "unexpected character").add_label(Label::primary(
-						self.file,
-						"",
-						c.0..c.0 + 1,
-					)),
+					Diagnostic::new(Level::Error, "unexpected character")
+						.add_label(Label::primary("", self.loc(c.0..c.0 + 1))),
 				),
 				c.0..c.0,
 			),

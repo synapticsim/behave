@@ -1,9 +1,8 @@
-use diagnostic::{Diagnostic, Level};
+use std::collections::HashMap;
+
+use diagnostic::Diagnostic;
 use lexer::Lexer;
 use parser::{Parser, ParserMode};
-
-use crate::ast::ASTTree;
-use crate::evaluation::evaluate;
 
 mod ast;
 pub mod diagnostic;
@@ -54,9 +53,9 @@ pub fn compile(main_file: &SourceFile, files: &[SourceFile]) -> CompileResult {
 		},
 	};
 
-	let mut tree = ASTTree::new();
+	let mut asts = HashMap::new();
 	for file in files {
-		if !tree.add_ast(
+		asts.insert(
 			&file.path,
 			match Parser::new(
 				ParserMode::ImportedFile,
@@ -74,25 +73,13 @@ pub fn compile(main_file: &SourceFile, files: &[SourceFile]) -> CompileResult {
 					}
 				},
 			},
-		) {
-			diagnostics.push(Diagnostic::new(
-				Level::Error,
-				format!("file '{}' is invalid", {
-					let mut s = String::new();
-					let mut iter = file.path.iter();
-					s += &iter.next().unwrap();
-					while let Some(p) = iter.next() {
-						s.push('.');
-						s += &p;
-					}
-					s
-				}),
-			))
-		}
+		);
 	}
 
+	println!("{:#?}\n{:#?}", main, asts);
+
 	CompileResult {
-		compiled: evaluate(&main_file.path, main, tree),
+		compiled: None,
 		diagnostics,
 	}
 }

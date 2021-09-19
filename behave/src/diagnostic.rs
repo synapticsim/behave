@@ -1,5 +1,6 @@
 use std::ops::Range;
 
+use crate::ast::Location;
 use crate::token::Token;
 
 /// The type of a label.
@@ -25,21 +26,21 @@ pub struct Label {
 }
 
 impl Label {
-	pub fn primary(file: &[impl ToString + Clone], message: impl ToString, range: Range<usize>) -> Self {
+	pub fn primary(message: impl ToString, loc: Location) -> Self {
 		Label {
 			label_type: LabelType::Primary,
 			message: message.to_string(),
-			file: file.to_vec().into_iter().map(|s| s.to_string()).collect(),
-			range,
+			file: loc.file.to_vec().into_iter().map(|s| s.to_string()).collect(),
+			range: loc.range,
 		}
 	}
 
-	pub fn secondary(file: &[impl ToString + Clone], message: impl ToString, range: Range<usize>) -> Self {
+	pub fn secondary(message: impl ToString, loc: Location) -> Self {
 		Label {
 			label_type: LabelType::Secondary,
 			message: message.to_string(),
-			file: file.to_vec().into_iter().map(|s| s.to_string()).collect(),
-			range,
+			file: loc.file.to_vec().into_iter().map(|s| s.to_string()).collect(),
+			range: loc.range,
 		}
 	}
 

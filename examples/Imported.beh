@@ -1,6 +1,6 @@
 enum ElevatorID {
-    Left,
-    Right
+    Left = 0,
+    Right = 1
 }
 
 fn elevator_id_to_string(id: ElevatorID) -> str {

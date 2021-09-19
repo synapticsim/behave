@@ -1,182 +1,217 @@
-use std::collections::HashMap;
+use std::fmt::{Display, Formatter};
 use std::ops::Range;
 
-use crate::diagnostic::{Diagnostic, Level};
-
-#[derive(Debug)]
-pub enum ASTTree {
-	Branch(HashMap<String, ASTTree>),
-	Leaf(AST),
-}
-
-impl ASTTree {
-	pub fn new() -> Self { Self::Branch(HashMap::new()) }
-
-	pub fn add_ast(&mut self, path: &[String], ast: AST) -> bool {
-		match self {
-			Self::Branch(ref mut map) => {
-				if path.len() == 1 {
-					map.insert(path[0].clone(), ASTTree::Leaf(ast));
-					true
-				} else {
-					let tree = map.entry(path[0].clone()).or_insert(ASTTree::new());
-					tree.add_ast(&path[1..], ast)
-				}
-			},
-			_ => false,
-		}
-	}
-
-	pub fn get_ast(&self, path: &[Ident]) -> Result<&ASTTree, Diagnostic> {
-		match self {
-			Self::Branch(map) => {
-				if path.len() == 0 {
-					Ok(self)
-				} else if let Some(ast) = map.get(&path[0].0) {
-					ast.get_ast(&path[1..])
-				} else {
-					Err(Diagnostic::new(Level::Error, "path does not exist"))
-				}
-			},
-			Self::Leaf(_) => {
-				if path.len() == 0 {
-					Ok(self)
-				} else {
-					Err(Diagnostic::new(Level::Error, "path refers to file as folder"))
-				}
-			},
-		}
-	}
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum ASTType {
-	Main(LODs, Behavior),
-	Secondary(Vec<Item>),
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct AST {
-	pub imports: Vec<Import>,
-	pub ast_data: ASTType,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct LOD {
-	pub min_size: Expression,
-	pub file: Expression,
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct Location<'a> {
 	pub range: Range<usize>,
+	pub file: &'a [String],
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct LODs(pub Vec<LOD>, pub Range<usize>);
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct Behavior(pub Vec<Statement>, pub Range<usize>);
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum ItemType {
-	Function(Ident, Function),
-	Variable(Variable),
-	Template(Template),
-	Struct(Struct),
-	Enum(Enum),
+pub enum ASTType<'a> {
+	Main(LODs<'a>, Behavior<'a>),
+	Secondary(Vec<Item<'a>>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct Variable {
-	pub name: Ident,
-	pub value: Option<Expression>,
+pub struct AST<'a> {
+	pub imports: Vec<Import<'a>>,
+	pub ast_data: ASTType<'a>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct EnumVariant {
-	pub name: Ident,
-	pub value: Option<Expression>,
-	pub range: Range<usize>,
+pub struct LOD<'a> {
+	pub min_size: Expression<'a>,
+	pub file: Expression<'a>,
+	pub loc: Location<'a>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct Enum {
-	pub name: Ident,
-	pub variants: Vec<EnumVariant>,
+pub struct LODs<'a>(pub Vec<LOD<'a>>, pub Range<usize>);
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Behavior<'a>(pub Vec<Statement<'a>>, pub Location<'a>);
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum ItemType<'a> {
+	Function(Ident<'a>, Function<'a>),
+	Variable(Variable<'a>),
+	Template(Template<'a>),
+	Struct(Struct<'a>),
+	Enum(Enum<'a>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct Struct {
-	pub name: Ident,
-	pub fields: Vec<VarEntry>,
+pub struct Variable<'a> {
+	pub name: Ident<'a>,
+	pub value: Option<Expression<'a>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct Item(pub ItemType, pub Range<usize>);
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct FunctionType {
-	pub args: Vec<Type>,
-	pub ret: Option<Box<Type>>,
+pub struct EnumVariant<'a> {
+	pub name: Ident<'a>,
+	pub value: usize,
+	pub loc: Location<'a>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct Template {
-	pub name: Ident,
-	pub args: Vec<VarEntry>,
-	pub block: Vec<Statement>,
+pub struct Enum<'a> {
+	pub name: Ident<'a>,
+	pub variants: Vec<EnumVariant<'a>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum TypeType {
+pub struct Struct<'a> {
+	pub name: Ident<'a>,
+	pub fields: Vec<VarEntry<'a>>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Item<'a>(pub ItemType<'a>, pub Location<'a>);
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct FunctionType<'a> {
+	pub args: Vec<Type<'a>>,
+	pub ret: Option<Box<Type<'a>>>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Template<'a> {
+	pub name: Ident<'a>,
+	pub args: Vec<VarEntry<'a>>,
+	pub block: Vec<Statement<'a>>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum TypeType<'a> {
 	Num,
 	Str,
 	Bool,
 	Code,
-	User(Ident),
-	Array(Box<Type>),
-	Function(FunctionType),
-	Optional(Box<Type>),
+	User(UserType<'a>),
+	Array(Box<Type<'a>>),
+	Function(FunctionType<'a>),
+	None,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct Type(pub TypeType, pub Range<usize>);
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct VarEntry {
-	pub name: Ident,
-	pub ty: Type,
-	pub default: Option<Box<Expression>>,
-	pub range: Range<usize>,
+pub struct UserType<'a> {
+	pub path: Path<'a>,
+	pub resolved: Option<ResolvedType<'a>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum ExpressionType {
+pub enum ResolvedType<'a> {
+	Struct(Struct<'a>),
+	Enum(Enum<'a>),
+}
+
+fn path_to_str<'a>(mut path: impl Iterator<Item = &'a String>) -> String {
+	let mut s = String::new();
+	s += &path.next().unwrap();
+	while let Some(p) = path.next() {
+		s.push('.');
+		s += &p;
+	}
+	s
+}
+
+impl Display for TypeType<'_> {
+	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+		use TypeType::*;
+		let val = match self {
+			Num => "num".to_string(),
+			Str => "str".to_string(),
+			Bool => "bool".to_string(),
+			Code => "code".to_string(),
+			User(p) => path_to_str(p.path.0.iter().map(|p| &p.0)),
+			Array(ty) => format!("[{}]", ty.0),
+			Function(f) => f.to_string(),
+			None => "none".to_string(),
+		};
+		write!(f, "{}", val)
+	}
+}
+
+impl Display for FunctionType<'_> {
+	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+		write!(f, "fn (")?;
+		let mut iter = self.args.iter();
+		if let Some(arg) = iter.next() {
+			write!(f, "{}", arg.0)?;
+		}
+		while let Some(arg) = iter.next() {
+			write!(f, ", {}", arg.0)?;
+		}
+		write!(f, ")")?;
+		if let Some(ret) = &self.ret {
+			write!(f, " -> {}", ret.0)?;
+		}
+
+		Ok(())
+	}
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Type<'a>(pub TypeType<'a>, pub Location<'a>);
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct VarEntry<'a> {
+	pub name: Ident<'a>,
+	pub ty: Type<'a>,
+	pub default: Option<Box<Expression<'a>>>,
+	pub loc: Location<'a>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum ExpressionType<'a> {
 	None,
 	String(String),
 	Number(f64),
 	Boolean(bool),
-	Block(Block),
-	Function(Function),
-	Code(Block),
-	Array(Vec<Expression>),
-	Access(Path),
-	RPNAccess(Box<Expression>),
-	Index(Index),
-	Assignment(Assignment),
-	Unary(UnaryOperator, Box<Expression>),
-	Binary(Box<Expression>, BinaryOperator, Box<Expression>),
-	Call(Call),
-	IfChain(IfChain),
-	Switch(Switch),
-	While(While),
-	For(For),
-	Return(Option<Box<Expression>>),
-	Break(Option<Box<Expression>>),
-	Use(Use),
-	Component(Component),
-	Animation(Animation),
+	Block(Block<'a>),
+	Function(Function<'a>),
+	Code(Block<'a>),
+	Array(Vec<Expression<'a>>),
+	Access(Access<'a>),
+	RPNAccess(Box<Expression<'a>>),
+	Index(Index<'a>),
+	Assignment(Assignment<'a>),
+	Unary(UnaryOperator, Box<Expression<'a>>),
+	Binary(Box<Expression<'a>>, BinaryOperator, Box<Expression<'a>>),
+	Call(Call<'a>),
+	IfChain(IfChain<'a>),
+	Switch(Switch<'a>),
+	While(While<'a>),
+	For(For<'a>),
+	Return(Option<Box<Expression<'a>>>),
+	Break(Option<Box<Expression<'a>>>),
+	Use(Use<'a>),
+	Component(Component<'a>),
+	Animation(Animation<'a>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct Expression(pub ExpressionType, pub Range<usize>);
+pub struct Access<'a> {
+	pub path: Path<'a>,
+	pub resolved: Option<ResolvedAccess<'a>>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum ResolvedAccess<'a> {
+	Local(usize),
+	Global(GlobalAccess<'a>),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum GlobalAccess<'a> {
+	Variable(Vec<String>),
+	EnumVariant(EnumVariant<'a>),
+	Function(Function<'a>),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Expression<'a>(pub ExpressionType<'a>, pub Location<'a>);
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum UnaryOperator {
@@ -201,115 +236,121 @@ pub enum BinaryOperator {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct Index {
-	pub array: Box<Expression>,
-	pub index: Box<Expression>,
+pub struct Index<'a> {
+	pub array: Box<Expression<'a>>,
+	pub index: Box<Expression<'a>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum AssignmentTarget {
-	Var(Path),
-	RPNVar(Box<Expression>),
-	Index(Path, Box<Expression>),
+pub enum AssignmentTarget<'a> {
+	Var(Access<'a>),
+	RPNVar(Box<Expression<'a>>),
+	Index(Access<'a>, Box<Expression<'a>>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct Assignment {
-	pub target: AssignmentTarget,
-	pub value: Box<Expression>,
+pub struct Assignment<'a> {
+	pub target: AssignmentTarget<'a>,
+	pub value: Box<Expression<'a>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct Switch {
-	pub on: Box<Expression>,
-	pub cases: Vec<Case>,
+pub struct Switch<'a> {
+	pub on: Box<Expression<'a>>,
+	pub cases: Vec<Case<'a>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct Case {
-	pub value: Box<Expression>,
-	pub code: Box<Expression>,
+pub struct Case<'a> {
+	pub value: Box<Expression<'a>>,
+	pub code: Box<Expression<'a>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct Block {
-	pub statements: Vec<Statement>,
-	pub expression: Option<Box<Expression>>,
+pub struct Block<'a> {
+	pub statements: Vec<Statement<'a>>,
+	pub expression: Option<Box<Expression<'a>>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct Call {
-	pub callee: Box<Expression>,
-	pub args: Vec<Expression>,
+pub struct Call<'a> {
+	pub callee: Box<Expression<'a>>,
+	pub args: Vec<Expression<'a>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct IfChain {
-	pub ifs: Vec<(Box<Expression>, Block, Range<usize>)>,
-	pub else_part: Option<(Block, Range<usize>)>,
+pub struct IfChain<'a> {
+	pub ifs: Vec<(Box<Expression<'a>>, Block<'a>, Location<'a>)>,
+	pub else_part: Option<(Block<'a>, Location<'a>)>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct While {
-	pub condition: Box<Expression>,
-	pub block: Block,
+pub struct While<'a> {
+	pub condition: Box<Expression<'a>>,
+	pub block: Block<'a>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct For {
-	pub var: Ident,
-	pub container: Box<Expression>,
-	pub block: Block,
+pub struct For<'a> {
+	pub var: Ident<'a>,
+	pub container: Box<Expression<'a>>,
+	pub block: Block<'a>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct Function {
-	pub params: Vec<VarEntry>,
-	pub ret: Option<Type>,
-	pub block: Block,
+pub struct Function<'a> {
+	pub args: Vec<VarEntry<'a>>,
+	pub ret: Option<Type<'a>>,
+	pub block: Block<'a>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct Use {
-	pub template: Path,
-	pub args: Vec<(Ident, Expression)>,
+pub struct Use<'a> {
+	pub template: UseTarget<'a>,
+	pub args: Vec<(Ident<'a>, Expression<'a>)>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct Component {
-	pub name: Box<Expression>,
-	pub node: Option<Box<Expression>>,
-	pub block: Vec<Statement>,
+pub struct UseTarget<'a> {
+	pub path: Path<'a>,
+	pub resolved: Option<Template<'a>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct Animation {
-	pub name: Box<Expression>,
-	pub length: Box<Expression>,
-	pub lag: Box<Expression>,
-	pub code: Box<Expression>,
+pub struct Component<'a> {
+	pub name: Box<Expression<'a>>,
+	pub node: Option<Box<Expression<'a>>>,
+	pub block: Vec<Statement<'a>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum StatementType {
-	Expression(ExpressionType),
-	Declaration(Variable),
+pub struct Animation<'a> {
+	pub name: Box<Expression<'a>>,
+	pub length: Box<Expression<'a>>,
+	pub lag: Box<Expression<'a>>,
+	pub code: Box<Expression<'a>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct Statement(pub StatementType, pub Range<usize>);
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum ImportType {
-	Normal(Path),
-	Extern(Expression),
+pub enum StatementType<'a> {
+	Expression(ExpressionType<'a>),
+	Declaration(Variable<'a>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct Import(pub ImportType, pub Range<usize>);
+pub struct Statement<'a>(pub StatementType<'a>, pub Location<'a>);
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct Path(pub Vec<Ident>, pub Range<usize>);
+pub enum ImportType<'a> {
+	Normal(Path<'a>),
+	Extern(Expression<'a>),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Import<'a>(pub ImportType<'a>, pub Location<'a>);
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Path<'a>(pub Vec<Ident<'a>>, pub Location<'a>);
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
-pub struct Ident(pub String, pub Range<usize>);
+pub struct Ident<'a>(pub String, pub Location<'a>);

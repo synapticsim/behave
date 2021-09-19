@@ -12,27 +12,19 @@ use crate::ast::{
 	ExpressionType,
 	For,
 	Function,
+	FunctionType,
 	Ident,
 	IfChain,
 	Index,
 	Path,
 	StatementType,
 	Switch,
+	TypeType,
 	UnaryOperator,
 	While,
 };
 use crate::diagnostic::{Diagnostic, Label, Level};
 use crate::evaluation::scope::ScopedResolver;
-
-fn path_to_str<'a>(mut path: impl Iterator<Item = &'a String>) -> String {
-	let mut s = String::new();
-	s += &path.next().unwrap();
-	while let Some(p) = path.next() {
-		s.push('.');
-		s += &p;
-	}
-	s
-}
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
@@ -40,45 +32,47 @@ pub enum Value {
 	Number(f64),
 	Boolean(bool),
 	Function(Function),
-	Array(Vec<Value>),
+	Array(TypeType, Vec<Value>),
 	Object(Object),
 	EnumVariant(EnumVariant),
 	Code(Block),
 	None,
+	Component(Component),
+	Animation(Animation),
 }
 
 impl Value {
-	fn type_to_str(&self) -> String {
+	fn type_to_str(&self) -> String { self.to_type().to_string() }
+
+	fn to_type(&self) -> TypeType {
 		use Value::*;
 		match self {
-			String(_) => "str".to_string(),
-			Number(_) => "num".to_string(),
-			Boolean(_) => "bool".to_string(),
-			Function(_) => "fn".to_string(),
-			Array(_) => "array".to_string(),
-			Object(o) => path_to_str(o.ty.0.iter().map(|i| &i.0)),
-			EnumVariant(e) => path_to_str(e.ty.0.iter().map(|i| &i.0)),
-			Code(_) => "code".to_string(),
-			None => "none".to_string(),
+			String(_) => TypeType::Str,
+			Number(_) => TypeType::Num,
+			Boolean(_) => TypeType::Bool,
+			Function(f) => TypeType::Function(FunctionType {
+				args: f.args.iter().map(|arg| arg.ty.clone()).collect(),
+				ret: f.ret.as_ref().map(|ret| Box::new(ret.clone())),
+			}),
+			Array(a, _) => a.clone(),
+			Object(o) => o.ty.clone(),
+			EnumVariant(e) => e.ty.clone(),
+			Code(_) => TypeType::Code,
+			None => TypeType::None,
+			_ => unreachable!(),
 		}
 	}
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum TemplateValue {
-	Component(Component),
-	Animation(Animation),
-}
-
-#[derive(Clone, Debug, PartialEq)]
 pub struct Object {
-	pub ty: Path,
+	pub ty: TypeType,
 	pub data: HashMap<Ident, Value>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct EnumVariant {
-	pub ty: Path,
+	pub ty: TypeType,
 	pub value: f64,
 }
 
@@ -107,7 +101,6 @@ impl<'a> ExpressionEvaluator<'a> {
 			Block(block) => self.evaluate_block(block)?,
 			Array(values) => self.evaluate_array(values)?,
 			Access(path) => self.evaluate_access(path)?,
-			RPNAccess(expr) => self.evaluate_rpn_access(expr)?,
 			Index(index) => self.evaluate_index(index)?,
 			Assignment(assignment) => self.evaluate_assignment(assignment)?,
 			Unary(op, expr) => self.evaluate_unary(*op, expr)?,
@@ -155,25 +148,40 @@ impl<'a> ExpressionEvaluator<'a> {
 		}
 	}
 
-	fn evaluate_rpn_access(&mut self, expr: &Expression) -> Result<Value, Vec<Diagnostic>> {
-		todo!("RPN access not implemented")
-	}
-
 	fn evaluate_array(&mut self, values: &[Expression]) -> Result<Value, Vec<Diagnostic>> {
 		let mut errors = Vec::new();
 		let array = values
 			.iter()
-			.map(|expr| self.evaluate_expression(expr))
-			.filter_map(|val| match val {
-				Ok(val) => Some(val),
+			.map(|expr| (expr.1.clone(), self.evaluate_expression(expr)))
+			.filter_map(|val| match val.1 {
+				Ok(ok) => Some((val.0, ok)),
 				Err(vec) => {
 					errors.extend(vec);
 					Option::None
 				},
 			})
-			.collect();
+			.collect::<Vec<_>>();
+		let ty = if let Some(ty) = array.get(0) {
+			ty.1.to_type()
+		} else {
+			TypeType::None
+		};
+		for value in array.iter() {
+			let val_ty = value.1.to_type();
+			if val_ty != ty {
+				errors.push(
+					Diagnostic::new(Level::Error, "type of each array element must be the same").add_label(
+						Label::primary(
+							self.file,
+							format!("this expression has type `{}`, but should have type `{}`", val_ty, ty),
+							value.0.clone(),
+						),
+					),
+				)
+			}
+		}
 		if errors.len() == 0 {
-			Ok(Value::Array(array))
+			Ok(Value::Array(ty, array.into_iter().map(|i| i.1).collect()))
 		} else {
 			Err(errors)
 		}
@@ -181,7 +189,7 @@ impl<'a> ExpressionEvaluator<'a> {
 
 	fn evaluate_index(&mut self, index: &Index) -> Result<Value, Vec<Diagnostic>> {
 		let array = self.evaluate_expression(&index.array)?;
-		if let Value::Array(array) = array {
+		if let Value::Array(_, array) = array {
 			let idx = self.evaluate_expression(&index.index)?;
 			if let Value::Number(idx) = idx {
 				let len = array.len();
@@ -354,7 +362,7 @@ impl<'a> ExpressionEvaluator<'a> {
 				(Value::Boolean(lhs), Value::Boolean(rhs)) => Ok(Value::Boolean(lhs == rhs)),
 				(Value::String(lhs), Value::String(rhs)) => Ok(Value::Boolean(lhs == rhs)),
 				(Value::Number(lhs), Value::Number(rhs)) => Ok(Value::Boolean(lhs == rhs)),
-				(Value::Array(lhs), Value::Array(rhs)) => Ok(Value::Boolean(lhs == rhs)),
+				(Value::Array(_, lhs), Value::Array(_, rhs)) => Ok(Value::Boolean(lhs == rhs)),
 				(Value::None, Value::None) => Ok(Value::Boolean(true)),
 				(lhs, rhs) => Err(vec![Diagnostic::new(Level::Error, "cannot equate")
 					.add_label(Label::primary(
@@ -372,7 +380,7 @@ impl<'a> ExpressionEvaluator<'a> {
 				(Value::Boolean(lhs), Value::Boolean(rhs)) => Ok(Value::Boolean(lhs != rhs)),
 				(Value::String(lhs), Value::String(rhs)) => Ok(Value::Boolean(lhs != rhs)),
 				(Value::Number(lhs), Value::Number(rhs)) => Ok(Value::Boolean(lhs != rhs)),
-				(Value::Array(lhs), Value::Array(rhs)) => Ok(Value::Boolean(lhs != rhs)),
+				(Value::Array(_, lhs), Value::Array(_, rhs)) => Ok(Value::Boolean(lhs != rhs)),
 				(Value::None, Value::None) => Ok(Value::Boolean(false)),
 				(lhs, rhs) => Err(vec![Diagnostic::new(Level::Error, "cannot compare")
 					.add_label(Label::primary(
