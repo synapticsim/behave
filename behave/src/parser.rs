@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 use std::{iter::Peekable, ops::Range};
 
-use crate::ast::{Access, Animation, AssignmentTarget, Component, Location, UseTarget, UserType};
+use crate::ast::{Access, Animation, AssignmentTarget, Component, Location, StructCreate, UseTarget, UserType};
+use crate::items::ItemMap;
 use crate::{
 	ast::{
 		ASTType,
@@ -57,6 +58,7 @@ where
 	mode: ParserMode,
 	file: &'a [String],
 	lexer: Peekable<Lexer<'b>>,
+	type_map: &'b mut ItemMap<'a>,
 	diagnostics: &'b mut Vec<Diagnostic>,
 }
 
@@ -239,11 +241,15 @@ impl<'a, 'b> Parser<'a, 'b> {
 
 	parse_literal!(parse_bool, Boolean, "expected boolean literal");
 
-	pub fn new(mode: ParserMode, file: &'a [String], lexer: Lexer<'b>, diagnostics: &'b mut Vec<Diagnostic>) -> Self {
+	pub fn new(
+		mode: ParserMode, file: &'a [String], lexer: Lexer<'b>, type_map: &'b mut ItemMap<'a>,
+		diagnostics: &'b mut Vec<Diagnostic>,
+	) -> Self {
 		Self {
 			mode,
 			file,
 			lexer: lexer.peekable(),
+			type_map,
 			diagnostics,
 		}
 	}
@@ -358,7 +364,10 @@ impl<'a, 'b> Parser<'a, 'b> {
 							continue 'w;
 						});
 						template.1 = self.loc(merge_range!(token.1, &template.1.range));
-						items.push(Item(ItemType::Template(template.0), template.1));
+						items.push(Item(
+							ItemType::Template(self.type_map.add_template(template.0)),
+							template.1,
+						));
 					},
 				},
 				TokenType::Enum => match ast.ast_data {
@@ -401,29 +410,6 @@ impl<'a, 'b> Parser<'a, 'b> {
 						});
 						item.1 = self.loc(merge_range!(token.1, item.1.range));
 						items.push(item);
-					},
-				},
-				TokenType::Let => match ast.ast_data {
-					ASTType::Main(..) => {
-						error = true;
-						let var = resync!(self, self.parse_variable(ExpressionParseMode::Normal), until TokenType::Semicolon, else continue 'w);
-						self.diagnostics.push(
-							Diagnostic::new(Level::Error, "Variable declaration is only allowed in imported files")
-								.add_label(Label::primary(
-									"move this to an imported `.beh` file",
-									self.loc(merge_range!(token.1, var.1.range)),
-								)),
-						)
-					},
-					ASTType::Secondary(ref mut items) => {
-						let var = resync!(self, self.parse_variable(ExpressionParseMode::Normal), until TokenType::Semicolon, else {
-							error = true;
-							continue 'w;
-						});
-						items.push(Item(
-							ItemType::Variable(var.0),
-							self.loc(merge_range!(token.1, var.1.range)),
-						));
 					},
 				},
 				TokenType::Function => match ast.ast_data {
@@ -602,7 +588,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 
 		if errors.len() == 0 {
 			range = merge_range!(range, expect!(self, TokenType::RightBrace, "expected `}`"));
-			Ok(Item(ItemType::Enum(item), self.loc(range)))
+			Ok(Item(ItemType::Enum(self.type_map.add_enum(item)), self.loc(range)))
 		} else {
 			let mut iter = errors.into_iter();
 			let ret = Err(iter.next().unwrap());
@@ -631,10 +617,13 @@ impl<'a, 'b> Parser<'a, 'b> {
 			return Err(Diagnostic::new(Level::Error, "unexpected end of file: expected `}`"));
 		}
 
-		Ok(Item(ItemType::Struct(Struct { name, fields }), {
-			let temp = expect!(self, TokenType::RightBrace, "expected `}`");
-			self.loc(merge_range!(range, temp))
-		}))
+		Ok(Item(
+			ItemType::Struct(self.type_map.add_struct(Struct { name, fields })),
+			{
+				let temp = expect!(self, TokenType::RightBrace, "expected `}`");
+				self.loc(merge_range!(range, temp))
+			},
+		))
 	}
 
 	fn parse_variable(&mut self, mode: ExpressionParseMode) -> Result<(Variable<'a>, Location<'a>), Diagnostic> {
@@ -790,16 +779,28 @@ impl<'a, 'b> Parser<'a, 'b> {
 		}
 	}
 
-	fn parse_template_values(&mut self) -> Result<(Vec<(Ident<'a>, Expression<'a>)>, Location<'a>), Diagnostic> {
+	fn parse_values(
+		&mut self, mode: ExpressionParseMode,
+	) -> Result<(Vec<(Ident<'a>, Expression<'a>)>, Location<'a>), Diagnostic> {
 		let range = expect!(self, TokenType::LeftBrace, "expected `{`");
 		let mut args = Vec::new();
-		loop {
-			let arg = self.parse_ident()?;
-			expect!(self, TokenType::Colon, "expected `colon`");
-			let value = self.parse_expression(ExpressionParseMode::Normal)?;
-			args.push((arg, value));
+		if let Some(tok) = self.peek() {
+			if let TokenType::RightBrace = tok.0 {
+			} else {
+				loop {
+					let arg = self.parse_ident()?;
+					expect!(self, TokenType::Colon, "expected `colon`");
+					let value = self.parse_expression(mode)?;
+					args.push((arg, value));
 
-			peek!(self, TokenType::Comma, else break);
+					peek!(self, TokenType::Comma, else break);
+				}
+			}
+		} else {
+			return Err(Diagnostic::new(
+				Level::Error,
+				"unexpected end of file: expected value setter or `}`",
+			));
 		}
 		Ok((args, {
 			let temp = expect!(self, TokenType::RightBrace, "expected `}`");
@@ -1467,6 +1468,28 @@ impl<'a, 'b> Parser<'a, 'b> {
 				}),
 				infix: None,
 			}),
+			TokenType::Struct => Some(&ParseRule {
+				prefix: Some(&|p, mode| {
+					let range = next!(p).1;
+					let ty = UserType {
+						path: p.parse_path()?,
+						resolved: None,
+					};
+					if mode != ExpressionParseMode::Template {
+						let values = p.parse_values(mode)?;
+						Ok(Expression(
+							ExpressionType::StructCreate(StructCreate { ty, values: values.0 }),
+							p.loc(merge_range!(range, values.1.range)),
+						))
+					} else {
+						Err(
+							Diagnostic::new(Level::Error, "struct creation is not allowed in template expressions")
+								.add_label(Label::primary("the struct was created here", p.loc(range))),
+						)
+					}
+				}),
+				infix: None,
+			}),
 			TokenType::Return => Some(&ParseRule {
 				prefix: Some(&|p, mode| {
 					let tok = next!(p);
@@ -1558,7 +1581,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 						return Ok(Expression(ExpressionType::Use(usee), p.loc(range)))
 					});
 
-					let args = p.parse_template_values()?;
+					let args = p.parse_values(ExpressionParseMode::Normal)?;
 					usee.args = args.0;
 
 					Ok(Expression(
@@ -1593,7 +1616,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 				prefix: Some(&|p, _| {
 					let range = next!(p).1;
 					let name = p.parse_expression(ExpressionParseMode::Normal)?;
-					let args = p.parse_template_values()?;
+					let args = p.parse_values(ExpressionParseMode::Normal)?;
 					let range = merge_range!(range, args.1.range);
 					let mut args_iter = args.0.into_iter();
 					let length = if let Some(length) = args_iter.find(|val| val.0 .0 == "length") {

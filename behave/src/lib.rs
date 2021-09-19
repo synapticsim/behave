@@ -1,14 +1,18 @@
-use std::collections::HashMap;
-
 use diagnostic::Diagnostic;
 use lexer::Lexer;
 use parser::{Parser, ParserMode};
 
+use crate::ast::{ASTTree, AST};
+use crate::diagnostic::Level;
+use crate::items::ItemMap;
+
 mod ast;
 pub mod diagnostic;
 mod evaluation;
+mod items;
 mod lexer;
 mod parser;
+mod resolve;
 mod token;
 
 /// The result of a compilation.
@@ -36,50 +40,78 @@ pub struct SourceFile {
 pub fn compile(main_file: &SourceFile, files: &[SourceFile]) -> CompileResult {
 	let mut diagnostics = Vec::new();
 
-	let main = match Parser::new(
-		ParserMode::MainFile,
-		&main_file.path,
-		Lexer::new(&main_file.path, &main_file.contents),
-		&mut diagnostics,
-	)
-	.parse()
-	{
-		Some(ast) => ast,
-		None => {
-			return CompileResult {
-				compiled: None,
-				diagnostics,
-			}
-		},
+	let mut item_map = ItemMap::new();
+	let (mut main, mut others) = if let Ok(asts) = parse(main_file, files, &mut item_map, &mut diagnostics) {
+		asts
+	} else {
+		return CompileResult {
+			compiled: None,
+			diagnostics,
+		};
 	};
 
-	let mut asts = HashMap::new();
-	for file in files {
-		asts.insert(
-			&file.path,
-			match Parser::new(
-				ParserMode::ImportedFile,
-				&file.path,
-				Lexer::new(&file.path, &file.contents),
-				&mut diagnostics,
-			)
-			.parse()
-			{
-				Some(ast) => ast,
-				None => {
-					return CompileResult {
-						compiled: None,
-						diagnostics,
-					}
-				},
-			},
-		);
+	if let Err(diag) = resolve::resolve(&mut main, &mut others, &mut item_map) {
+		diagnostics.extend(diag);
+		return CompileResult {
+			compiled: None,
+			diagnostics,
+		};
 	}
-
-	println!("{:#?}\n{:#?}", main, asts);
 
 	CompileResult {
 		compiled: None,
 		diagnostics,
 	}
+}
+
+fn parse<'a>(
+	main_file: &'a SourceFile, files: &'a [SourceFile], item_map: &mut ItemMap<'a>, diagnostics: &mut Vec<Diagnostic>,
+) -> Result<(AST<'a>, ASTTree<'a>), ()> {
+	let main = match Parser::new(
+		ParserMode::MainFile,
+		&main_file.path,
+		Lexer::new(&main_file.path, &main_file.contents),
+		item_map,
+		diagnostics,
+	)
+	.parse()
+	{
+		Some(ast) => ast,
+		None => return Err(()),
+	};
+
+	let mut tree = ASTTree::new();
+	for file in files {
+		if !tree.add_ast(
+			&file.path,
+			match Parser::new(
+				ParserMode::ImportedFile,
+				&file.path,
+				Lexer::new(&file.path, &file.contents),
+				item_map,
+				diagnostics,
+			)
+			.parse()
+			{
+				Some(ast) => ast,
+				None => return Err(()),
+			},
+		) {
+			diagnostics.push(Diagnostic::new(
+				Level::Error,
+				format!("file '{}' is invalid", {
+					let mut s = String::new();
+					let mut iter = file.path.iter();
+					s += &iter.next().unwrap();
+					while let Some(p) = iter.next() {
+						s.push('.');
+						s += &p;
+					}
+					s
+				}),
+			))
+		}
+	}
+
+	Ok((main, tree))
 }

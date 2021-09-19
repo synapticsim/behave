@@ -1,5 +1,55 @@
+use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::ops::Range;
+
+use crate::diagnostic::{Diagnostic, Level};
+use crate::items::{EnumId, StructId, TemplateId};
+
+#[derive(Clone, Debug)]
+pub enum ASTTree<'a> {
+	Branch(HashMap<String, ASTTree<'a>>),
+	Leaf(AST<'a>),
+}
+
+impl<'a> ASTTree<'a> {
+	pub fn new() -> Self { Self::Branch(HashMap::new()) }
+
+	pub fn add_ast(&mut self, path: &[String], ast: AST<'a>) -> bool {
+		match self {
+			Self::Branch(ref mut map) => {
+				if path.len() == 1 {
+					map.insert(path[0].clone(), ASTTree::Leaf(ast));
+					true
+				} else {
+					let tree = map.entry(path[0].clone()).or_insert(ASTTree::new());
+					tree.add_ast(&path[1..], ast)
+				}
+			},
+			_ => false,
+		}
+	}
+
+	pub fn get_ast(&self, path: &[Ident]) -> Result<&ASTTree, Diagnostic> {
+		match self {
+			Self::Branch(map) => {
+				if path.len() == 0 {
+					Ok(self)
+				} else if let Some(ast) = map.get(&path[0].0) {
+					ast.get_ast(&path[1..])
+				} else {
+					Err(Diagnostic::new(Level::Error, "path does not exist"))
+				}
+			},
+			Self::Leaf(_) => {
+				if path.len() == 0 {
+					Ok(self)
+				} else {
+					Err(Diagnostic::new(Level::Error, "path refers to file as folder"))
+				}
+			},
+		}
+	}
+}
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct Location<'a> {
@@ -35,10 +85,9 @@ pub struct Behavior<'a>(pub Vec<Statement<'a>>, pub Location<'a>);
 #[derive(Clone, Debug, PartialEq)]
 pub enum ItemType<'a> {
 	Function(Ident<'a>, Function<'a>),
-	Variable(Variable<'a>),
-	Template(Template<'a>),
-	Struct(Struct<'a>),
-	Enum(Enum<'a>),
+	Template(TemplateId),
+	Struct(StructId),
+	Enum(EnumId),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -97,13 +146,13 @@ pub enum TypeType<'a> {
 #[derive(Clone, Debug, PartialEq)]
 pub struct UserType<'a> {
 	pub path: Path<'a>,
-	pub resolved: Option<ResolvedType<'a>>,
+	pub resolved: Option<ResolvedType>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub enum ResolvedType<'a> {
-	Struct(Struct<'a>),
-	Enum(Enum<'a>),
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ResolvedType {
+	Struct(StructId),
+	Enum(EnumId),
 }
 
 fn path_to_str<'a>(mut path: impl Iterator<Item = &'a String>) -> String {
@@ -174,6 +223,7 @@ pub enum ExpressionType<'a> {
 	Code(Block<'a>),
 	Array(Vec<Expression<'a>>),
 	Access(Access<'a>),
+	StructCreate(StructCreate<'a>),
 	RPNAccess(Box<Expression<'a>>),
 	Index(Index<'a>),
 	Assignment(Assignment<'a>),
@@ -189,25 +239,6 @@ pub enum ExpressionType<'a> {
 	Use(Use<'a>),
 	Component(Component<'a>),
 	Animation(Animation<'a>),
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct Access<'a> {
-	pub path: Path<'a>,
-	pub resolved: Option<ResolvedAccess<'a>>,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum ResolvedAccess<'a> {
-	Local(usize),
-	Global(GlobalAccess<'a>),
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum GlobalAccess<'a> {
-	Variable(Vec<String>),
-	EnumVariant(EnumVariant<'a>),
-	Function(Function<'a>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -236,9 +267,33 @@ pub enum BinaryOperator {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct StructCreate<'a> {
+	pub ty: UserType<'a>,
+	pub values: Vec<(Ident<'a>, Expression<'a>)>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct Index<'a> {
 	pub array: Box<Expression<'a>>,
 	pub index: Box<Expression<'a>>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Access<'a> {
+	pub path: Path<'a>,
+	pub resolved: Option<ResolvedAccess<'a>>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum ResolvedAccess<'a> {
+	Local(usize),
+	Global(GlobalAccess<'a>),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum GlobalAccess<'a> {
+	EnumVariant(EnumVariant<'a>),
+	Function(Function<'a>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -313,7 +368,7 @@ pub struct Use<'a> {
 #[derive(Clone, Debug, PartialEq)]
 pub struct UseTarget<'a> {
 	pub path: Path<'a>,
-	pub resolved: Option<Template<'a>>,
+	pub resolved: Option<TemplateId>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
