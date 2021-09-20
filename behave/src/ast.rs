@@ -245,7 +245,18 @@ pub enum ResolvedAccess {
 #[derive(Clone, Debug, PartialEq)]
 pub enum GlobalAccess {
 	Enum(EnumAccess),
-	Function(FunctionId),
+	Function(FunctionAccess),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum FunctionAccess {
+	User(FunctionId),
+	Inbuilt(InbuiltFunction),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum InbuiltFunction {
+	Format,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

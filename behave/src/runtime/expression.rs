@@ -14,8 +14,11 @@ use crate::ast::{
 	Expression,
 	ExpressionType,
 	For,
+	FunctionAccess,
 	GlobalAccess,
+	Ident,
 	IfChain,
+	InbuiltFunction,
 	Index,
 	Location,
 	Path,
@@ -31,7 +34,7 @@ use crate::ast::{
 };
 use crate::diagnostic::{Diagnostic, Label, Level};
 use crate::items::ItemMap;
-use crate::runtime::value::{CallStack, Object, RuntimeType, Value};
+use crate::runtime::value::{CallStack, FunctionValue, Object, RuntimeType, Value};
 
 pub enum Flow<'a> {
 	Ok(Value<'a>),
@@ -105,7 +108,7 @@ impl<'a> ExpressionEvaluator<'a> {
 			String(str) => Value::String(str.clone()),
 			Number(num) => Value::Number(*num),
 			Boolean(val) => Value::Boolean(*val),
-			Function(func) => Value::Function(func.clone()),
+			Function(func) => Value::Function(FunctionValue::User(func.clone())),
 			Code(code) => Value::Code(code.clone()),
 			Block(block) => self.evaluate_block(block)?,
 			Array(values) => self.evaluate_array(values)?,
@@ -181,7 +184,10 @@ impl<'a> ExpressionEvaluator<'a> {
 	fn evaluate_access(&mut self, access: &Access<'a>) -> Flow<'a> {
 		match access.resolved.as_ref().unwrap() {
 			ResolvedAccess::Global(g) => match g {
-				GlobalAccess::Function(id) => Flow::Ok(Value::Function(self.item_map.get_function(*id).clone())),
+				GlobalAccess::Function(id) => Flow::Ok(Value::Function(match id {
+					FunctionAccess::User(id) => FunctionValue::User(self.item_map.get_function(*id).clone()),
+					FunctionAccess::Inbuilt(inbuilt) => FunctionValue::Inbuilt(*inbuilt),
+				})),
 				GlobalAccess::Enum(e) => Flow::Ok(Value::Enum(*e)),
 			},
 			ResolvedAccess::Local => match self.stack.var(&access.path.0[0]) {
@@ -807,93 +813,103 @@ impl<'a> ExpressionEvaluator<'a> {
 			.collect::<Vec<_>>();
 
 		if let Value::Function(f) = callee {
-			if errors.len() == 0 {
-				if f.args
-					.iter()
-					.map(|arg| RuntimeType::from(self.item_map, &arg.ty.0))
-					.zip(args.iter().map(|arg| arg.get_type(self.item_map)))
-					.enumerate()
-					.all(|arg_pair| {
-						if arg_pair.1 .0 != arg_pair.1 .1 {
-							errors.push(
-								Diagnostic::new(Level::Error, "mismatched argument types")
-									.add_label(Label::primary(
-										format!("this expression result is of type `{}`...", arg_pair.1 .1),
-										call.args[arg_pair.0].1.clone(),
-									))
-									.add_label(Label::secondary(
-										format!("...but type `{}` is expected", arg_pair.1 .0),
-										f.args[arg_pair.0].ty.1.clone(),
-									)),
-							);
-							false
-						} else {
-							true
-						}
-					}) {
-					self.stack.call(
-						args.into_iter()
+			match f {
+				FunctionValue::User(f) => {
+					if errors.len() == 0 {
+						if f.args
+							.iter()
+							.map(|arg| RuntimeType::from(self.item_map, &arg.ty.0))
+							.zip(args.iter().map(|arg| arg.get_type(self.item_map)))
 							.enumerate()
-							.map(|arg| (f.args[arg.0].name.0.clone(), arg.1)),
-					);
-					let block_result = self.evaluate_block(&f.block);
-					self.stack.end_call();
-
-					let (loc, ret) = match block_result {
-						Flow::Ok(ret) => (
-							match f.block.expression {
-								Some(ref expr) => expr.1.clone(),
-								None => Location {
-									file: f.block.loc.file,
-									range: f.block.loc.range.end - 1..f.block.loc.range.end,
-								},
-							},
-							ret,
-						),
-						Flow::Break(loc, _) => {
-							errors.push(
-								Diagnostic::new(Level::Error, "unexpected break")
-									.add_label(Label::primary("break expression here `{}`", loc)),
+							.all(|arg_pair| {
+								if arg_pair.1 .0 != arg_pair.1 .1 {
+									errors.push(
+										Diagnostic::new(Level::Error, "mismatched argument types")
+											.add_label(Label::primary(
+												format!("this expression result is of type `{}`...", arg_pair.1 .1),
+												call.args[arg_pair.0].1.clone(),
+											))
+											.add_label(Label::secondary(
+												format!("...but type `{}` is expected", arg_pair.1 .0),
+												f.args[arg_pair.0].ty.1.clone(),
+											)),
+									);
+									false
+								} else {
+									true
+								}
+							}) {
+							self.stack.call(
+								args.into_iter()
+									.enumerate()
+									.map(|arg| (f.args[arg.0].name.0.clone(), arg.1)),
 							);
-							return Flow::Err(errors);
-						},
-						Flow::Return(loc, ret) => (loc, ret),
-						Flow::Err(err) => {
-							errors.extend(err);
-							return Flow::Err(errors);
-						},
-					};
+							let block_result = self.evaluate_block(&f.block);
+							self.stack.end_call();
 
-					let returns = ret.get_type(self.item_map);
-					let should = f
-						.ret
-						.as_ref()
-						.map(|ty| (RuntimeType::from(self.item_map, &ty.0), ty.1.clone()))
-						.unwrap_or((
-							RuntimeType::None,
-							Location {
-								file: f.block.loc.file,
-								range: f.block.loc.range.start..f.block.loc.range.start + 1,
-							},
-						));
-					if should.0 == returns {
-						Flow::Ok(ret)
+							let (loc, ret) = match block_result {
+								Flow::Ok(ret) => (
+									match f.block.expression {
+										Some(ref expr) => expr.1.clone(),
+										None => Location {
+											file: f.block.loc.file,
+											range: f.block.loc.range.end - 1..f.block.loc.range.end,
+										},
+									},
+									ret,
+								),
+								Flow::Break(loc, _) => {
+									errors.push(
+										Diagnostic::new(Level::Error, "unexpected break")
+											.add_label(Label::primary("break expression here `{}`", loc)),
+									);
+									return Flow::Err(errors);
+								},
+								Flow::Return(loc, ret) => (loc, ret),
+								Flow::Err(err) => {
+									errors.extend(err);
+									return Flow::Err(errors);
+								},
+							};
+
+							let returns = ret.get_type(self.item_map);
+							let should = f
+								.ret
+								.as_ref()
+								.map(|ty| (RuntimeType::from(self.item_map, &ty.0), ty.1.clone()))
+								.unwrap_or((
+									RuntimeType::None,
+									Location {
+										file: f.block.loc.file,
+										range: f.block.loc.range.start..f.block.loc.range.start + 1,
+									},
+								));
+							if should.0 == returns {
+								Flow::Ok(ret)
+							} else {
+								errors.push(
+									Diagnostic::new(Level::Error, "mismatched return type")
+										.add_label(Label::primary(
+											format!("function returns type `{}`...", returns),
+											loc,
+										))
+										.add_label(Label::secondary(
+											format!("...but should return type `{}`", should.0),
+											should.1,
+										)),
+								);
+								Flow::Err(errors)
+							}
+						} else {
+							Flow::Err(errors)
+						}
 					} else {
-						errors.push(
-							Diagnostic::new(Level::Error, "mismatched return type")
-								.add_label(Label::primary(format!("function returns type `{}`...", returns), loc))
-								.add_label(Label::secondary(
-									format!("...but should return type `{}`", should.0),
-									should.1,
-								)),
-						);
 						Flow::Err(errors)
 					}
-				} else {
-					Flow::Err(errors)
-				}
-			} else {
-				Flow::Err(errors)
+				},
+				FunctionValue::Inbuilt(inbuilt) => {
+					self.evaluate_inbuilt_function(inbuilt, call.callee.1.clone(), &call.args)
+				},
 			}
 		} else {
 			errors.push(
@@ -903,6 +919,14 @@ impl<'a> ExpressionEvaluator<'a> {
 				)),
 			);
 			Flow::Err(errors)
+		}
+	}
+
+	fn evaluate_inbuilt_function(
+		&mut self, func: InbuiltFunction, loc: Location<'a>, args: &[Expression<'a>],
+	) -> Flow<'a> {
+		match func {
+			InbuiltFunction::Format => self.evaluate_format(loc, args),
 		}
 	}
 
@@ -949,4 +973,68 @@ impl<'a> ExpressionEvaluator<'a> {
 	fn evaluate_while(&mut self, while_loop: &While<'a>) -> Flow<'a> { todo!("For not implemented") }
 
 	fn evaluate_for(&mut self, for_loop: &For<'a>) -> Flow<'a> { todo!("While not implemented") }
+
+	fn evaluate_format(&mut self, loc: Location<'a>, args: &[Expression<'a>]) -> Flow<'a> {
+		if let Some(arg) = args.get(0) {
+			let value = self.evaluate_expression(arg)?;
+			if let Value::String(mut s) = value {
+				let format_replacement = s.matches("{}");
+				let arity = format_replacement.count();
+				if arity == args.len() - 1 {
+					let mut errors = Vec::new();
+					// I hate strings, please don't sue me.
+					for expr in args[1..].iter() {
+						let value = self.evaluate_expression(expr)?;
+						let replace = match value {
+							Value::String(s) => s,
+							Value::Number(n) => n.to_string(),
+							Value::Boolean(b) => b.to_string(),
+							_ => {
+								errors.push(
+									Diagnostic::new(Level::Error, "can only format primitive types").add_label(
+										Label::primary(
+											format!(
+												"this expression has a result of type `{}`",
+												value.get_type(&self.item_map)
+											),
+											expr.1.clone(),
+										),
+									),
+								);
+								continue;
+							},
+						};
+						s = s.replacen("{}", &replace, 1);
+					}
+
+					if errors.len() == 0 {
+						Flow::Ok(Value::String(s))
+					} else {
+						Flow::Err(errors)
+					}
+				} else {
+					Flow::Err(vec![Diagnostic::new(
+						Level::Error,
+						"incorrect number of format arguments",
+					)
+					.add_label(Label::primary(
+						format!("expected {} arguments, found {}", arity, args.len() - 1),
+						loc,
+					))])
+				}
+			} else {
+				Flow::Err(vec![Diagnostic::new(
+					Level::Error,
+					"format string must result in type `string`",
+				)
+				.add_label(Label::primary(
+					format!("expression has a result of type `{}`", value.get_type(&self.item_map)),
+					loc,
+				))])
+			}
+		} else {
+			Flow::Err(vec![Diagnostic::new(Level::Error, "missing format string")
+				.add_label(Label::primary("in this invocation of `format`", loc))])
+		}
+	}
 }

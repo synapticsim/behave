@@ -1,13 +1,17 @@
 use std::collections::HashMap;
 
+use lazy_static::lazy_static;
+
 use crate::ast::{
 	ASTPass,
 	ASTTree,
 	ASTType,
 	Access,
 	EnumAccess,
+	FunctionAccess,
 	GlobalAccess,
 	ImportType,
+	InbuiltFunction,
 	ItemType,
 	Path,
 	ResolvedAccess,
@@ -19,6 +23,14 @@ use crate::ast::{
 };
 use crate::diagnostic::{Diagnostic, Label, Level};
 use crate::items::{FunctionId, ItemMap, TemplateId};
+
+lazy_static! {
+	static ref INBUILT_FUNCTION_MAP: HashMap<Vec<String>, InbuiltFunction> = {
+		let mut h = HashMap::new();
+		h.insert(vec!["format".to_string()], InbuiltFunction::Format);
+		h
+	};
+}
 
 #[derive(Debug)]
 struct Resolver<'a> {
@@ -172,11 +184,15 @@ impl ASTPass for Resolver<'_> {
 
 	fn access(&mut self, access: &mut Access) {
 		access.resolved = Some(
-			if let Some(resolved) = self
+			if let Some(inbuilt) =
+				INBUILT_FUNCTION_MAP.get(&access.path.0.iter().map(|s| s.0.clone()).collect::<Vec<_>>())
+			{
+				ResolvedAccess::Global(GlobalAccess::Function(FunctionAccess::Inbuilt(*inbuilt)))
+			} else if let Some(resolved) = self
 				.functions
 				.get(&access.path.0.iter().map(|s| s.0.clone()).collect::<Vec<_>>())
 			{
-				ResolvedAccess::Global(GlobalAccess::Function(*resolved))
+				ResolvedAccess::Global(GlobalAccess::Function(FunctionAccess::User(*resolved)))
 			} else if let Some(resolved) = self
 				.enum_variants
 				.get(&access.path.0.iter().map(|s| s.0.clone()).collect::<Vec<_>>())

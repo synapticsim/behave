@@ -10,6 +10,7 @@ use crate::ast::{
 	Function,
 	FunctionType,
 	Ident,
+	InbuiltFunction,
 	ResolvedType,
 	Struct,
 	TypeType,
@@ -107,7 +108,7 @@ pub enum Value<'a> {
 	String(String),
 	Number(f64),
 	Boolean(bool),
-	Function(Function<'a>),
+	Function(FunctionValue<'a>),
 	Object(Object<'a>),
 	Enum(EnumAccess),
 	Array(RuntimeType<'a>, Vec<Value<'a>>),
@@ -115,6 +116,12 @@ pub enum Value<'a> {
 	None,
 	Component(RuntimeComponent),
 	Animation(RuntimeAnimation),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum FunctionValue<'a> {
+	User(Function<'a>),
+	Inbuilt(InbuiltFunction),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -135,14 +142,17 @@ impl<'a> Value<'a> {
 			Self::String(_) => RuntimeType::Str,
 			Self::Number(_) => RuntimeType::Num,
 			Self::Boolean(_) => RuntimeType::Bool,
-			Self::Function(f) => RuntimeType::Function(RuntimeFunctionType {
-				args: f
-					.args
-					.iter()
-					.map(|arg| RuntimeType::from(item_map, &arg.ty.0))
-					.collect(),
-				ret: f.ret.as_ref().map(|ret| Box::new(RuntimeType::from(item_map, &ret.0))),
-			}),
+			Self::Function(f) => match f {
+				FunctionValue::User(f) => RuntimeType::Function(RuntimeFunctionType {
+					args: f
+						.args
+						.iter()
+						.map(|arg| RuntimeType::from(item_map, &arg.ty.0))
+						.collect(),
+					ret: f.ret.as_ref().map(|ret| Box::new(RuntimeType::from(item_map, &ret.0))),
+				}),
+				_ => unreachable!("ICE: tried to get type of inbuilt function"),
+			},
 			Self::Object(obj) => RuntimeType::Struct(item_map.get_struct(obj.id)),
 			Self::Enum(access) => RuntimeType::Enum(item_map.get_enum(access.id)),
 			Self::Array(ty, _) => RuntimeType::Array(Box::new(ty.clone())),
