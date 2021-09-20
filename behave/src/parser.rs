@@ -260,14 +260,8 @@ impl<'a, 'b> Parser<'a, 'b> {
 			imports: Vec::new(),
 			ast_data: match self.mode {
 				ParserMode::MainFile => ASTType::Main(
-					LODs(Vec::new(), no_range()),
-					Behavior(
-						Vec::new(),
-						Location {
-							file: self.file,
-							range: no_range(),
-						},
-					),
+					LODs(Vec::new(), self.loc(no_range())),
+					Behavior(Vec::new(), self.loc(no_range())),
 				),
 				ParserMode::ImportedFile => ASTType::Secondary(Vec::new()),
 			},
@@ -310,7 +304,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 							error = true;
 							continue 'w;
 						});
-						lods.1 = merge_range!(token.1, &lods.1);
+						lods.1 = self.loc(merge_range!(token.1, &lods.1.range));
 					},
 					ASTType::Secondary(..) => {
 						error = true;
@@ -319,7 +313,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 							Diagnostic::new(Level::Error, "LOD description is only allowed in the main file")
 								.add_label(Label::primary(
 									"move this to the main `.beh` file",
-									self.loc(merge_range!(token.1, lods.1)),
+									self.loc(merge_range!(token.1, lods.1.range)),
 								)),
 						);
 					},
@@ -477,8 +471,11 @@ impl<'a, 'b> Parser<'a, 'b> {
 	}
 
 	fn parse_lods(&mut self) -> Result<LODs<'a>, Diagnostic> {
-		let mut lods = LODs(Vec::new(), no_range());
-		lods.1 = expect!(self, TokenType::LeftBrace, "expected `{`");
+		let mut lods = LODs(Vec::new(), self.loc(no_range()));
+		lods.1 = {
+			let temp = expect!(self, TokenType::LeftBrace, "expected `{`");
+			self.loc(temp)
+		};
 
 		loop {
 			let min_size = self.parse_expression(ExpressionParseMode::Normal)?;
@@ -494,7 +491,10 @@ impl<'a, 'b> Parser<'a, 'b> {
 			peek!(self, TokenType::Comma, else break);
 		}
 
-		lods.1 = merge_range!(lods.1, expect!(self, TokenType::RightBrace, "expected `}`"));
+		lods.1 = {
+			let temp = merge_range!(lods.1.range, expect!(self, TokenType::RightBrace, "expected `}`"));
+			self.loc(temp)
+		};
 		Ok(lods)
 	}
 
@@ -912,6 +912,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 		let mut block = Block {
 			statements: Vec::new(),
 			expression: None,
+			loc: self.loc(no_range()),
 		};
 		let mut range = no_range();
 		let mut tok = peek!(self, else return Err(Diagnostic::new(Level::Error, "unexpected end of file")));
@@ -962,6 +963,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 				}
 			}
 
+			block.loc = self.loc(range.clone());
 			Ok((block, self.loc(range)))
 		}
 	}
@@ -1031,7 +1033,8 @@ impl<'a, 'b> Parser<'a, 'b> {
 		});
 		range = merge_range!(range, expect!(self, TokenType::LeftBrace, "expected `{`"));
 
-		let block = self.parse_block(mode)?;
+		let mut block = self.parse_block(mode)?;
+		block.1 = self.loc(merge_range!(&range, block.1.range.clone()));
 		range = merge_range!(range, block.1.range);
 		Ok((
 			Function {

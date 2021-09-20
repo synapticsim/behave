@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::fmt::{Display, Formatter};
 use std::ops::Range;
 
 use crate::diagnostic::{Diagnostic, Level};
@@ -77,7 +76,7 @@ pub struct LOD<'a> {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct LODs<'a>(pub Vec<LOD<'a>>, pub Range<usize>);
+pub struct LODs<'a>(pub Vec<LOD<'a>>, pub Location<'a>);
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Behavior<'a>(pub Vec<Statement<'a>>, pub Location<'a>);
@@ -140,7 +139,6 @@ pub enum TypeType<'a> {
 	User(UserType<'a>),
 	Array(Box<Type<'a>>),
 	Function(FunctionType<'a>),
-	None,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -153,52 +151,6 @@ pub struct UserType<'a> {
 pub enum ResolvedType {
 	Struct(StructId),
 	Enum(EnumId),
-}
-
-fn path_to_str<'a>(mut path: impl Iterator<Item = &'a String>) -> String {
-	let mut s = String::new();
-	s += &path.next().unwrap();
-	while let Some(p) = path.next() {
-		s.push('.');
-		s += &p;
-	}
-	s
-}
-
-impl Display for TypeType<'_> {
-	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-		use TypeType::*;
-		let val = match self {
-			Num => "num".to_string(),
-			Str => "str".to_string(),
-			Bool => "bool".to_string(),
-			Code => "code".to_string(),
-			User(p) => path_to_str(p.path.0.iter().map(|p| &p.0)),
-			Array(ty) => format!("[{}]", ty.0),
-			Function(f) => f.to_string(),
-			None => "none".to_string(),
-		};
-		write!(f, "{}", val)
-	}
-}
-
-impl Display for FunctionType<'_> {
-	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-		write!(f, "fn (")?;
-		let mut iter = self.args.iter();
-		if let Some(arg) = iter.next() {
-			write!(f, "{}", arg.0)?;
-		}
-		while let Some(arg) = iter.next() {
-			write!(f, ", {}", arg.0)?;
-		}
-		write!(f, ")")?;
-		if let Some(ret) = &self.ret {
-			write!(f, " -> {}", ret.0)?;
-		}
-
-		Ok(())
-	}
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -331,6 +283,7 @@ pub struct Case<'a> {
 pub struct Block<'a> {
 	pub statements: Vec<Statement<'a>>,
 	pub expression: Option<Box<Expression<'a>>>,
+	pub loc: Location<'a>,
 }
 
 #[derive(Clone, Debug, PartialEq)]

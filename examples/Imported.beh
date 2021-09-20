@@ -1,3 +1,7 @@
+struct Cool {
+    lod_0: num
+}
+
 enum ElevatorID {
     Left = 0,
     Right = 1
@@ -5,9 +9,9 @@ enum ElevatorID {
 
 fn elevator_id_to_string(id: ElevatorID) -> str {
     switch id {
-        ElevatorID.Left -> "Left",
-        ElevatorID.Right -> "Right"
-    }
+        ElevatorID.Left -> return "Left",
+        ElevatorID.Right -> return "Right"
+    };
 }
 
 template Elevators(id: ElevatorID) {
