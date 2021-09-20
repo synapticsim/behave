@@ -3,7 +3,7 @@ use std::fmt::{Display, Formatter};
 use std::ops::Range;
 
 use crate::diagnostic::{Diagnostic, Level};
-use crate::items::{EnumId, StructId, TemplateId};
+use crate::items::{EnumId, FunctionId, ItemMap, StructId, TemplateId};
 
 #[derive(Clone, Debug)]
 pub enum ASTTree<'a> {
@@ -84,7 +84,7 @@ pub struct Behavior<'a>(pub Vec<Statement<'a>>, pub Location<'a>);
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ItemType<'a> {
-	Function(Ident<'a>, Function<'a>),
+	Function(Ident<'a>, FunctionId),
 	Template(TemplateId),
 	Struct(StructId),
 	Enum(EnumId),
@@ -268,7 +268,7 @@ pub enum BinaryOperator {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct StructCreate<'a> {
-	pub ty: UserType<'a>,
+	pub ty: Type<'a>,
 	pub values: Vec<(Ident<'a>, Expression<'a>)>,
 }
 
@@ -281,19 +281,25 @@ pub struct Index<'a> {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Access<'a> {
 	pub path: Path<'a>,
-	pub resolved: Option<ResolvedAccess<'a>>,
+	pub resolved: Option<ResolvedAccess>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum ResolvedAccess<'a> {
-	Local(usize),
-	Global(GlobalAccess<'a>),
+pub enum ResolvedAccess {
+	Local,
+	Global(GlobalAccess),
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum GlobalAccess<'a> {
-	EnumVariant(EnumVariant<'a>),
-	Function(Function<'a>),
+pub enum GlobalAccess {
+	Enum(EnumAccess),
+	Function(FunctionId),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct EnumAccess {
+	pub id: EnumId,
+	pub value: usize,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -409,3 +415,224 @@ pub struct Path<'a>(pub Vec<Ident<'a>>, pub Location<'a>);
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct Ident<'a>(pub String, pub Location<'a>);
+
+pub trait ASTPass {
+	fn lods(&mut self, lods: &mut LODs) {
+		for lod in lods.0.iter_mut() {
+			self.expression(&mut lod.min_size.0);
+			self.expression(&mut lod.file.0);
+		}
+	}
+
+	fn behavior(&mut self, behavior: &mut Behavior) {
+		for stmt in behavior.0.iter_mut() {
+			self.statement(stmt);
+		}
+	}
+
+	fn item(&mut self, item: &mut Item, item_map: &mut ItemMap) {
+		match item.0 {
+			ItemType::Struct(id) => self.struct_decl(item_map.get_struct_mut(id)),
+			ItemType::Template(id) => self.template(item_map.get_template_mut(id)),
+			ItemType::Function(_, id) => self.function(item_map.get_function_mut(id)),
+			ItemType::Enum(id) => self.enum_decl(item_map.get_enum_mut(id)),
+		}
+	}
+
+	fn struct_decl(&mut self, s: &mut Struct) {
+		for field in s.fields.iter_mut() {
+			self.var_entry(field);
+		}
+	}
+
+	fn enum_decl(&mut self, _e: &mut Enum) {}
+
+	fn template(&mut self, t: &mut Template) {
+		for arg in t.args.iter_mut() {
+			self.var_entry(arg);
+		}
+
+		for stmt in t.block.iter_mut() {
+			self.statement(stmt);
+		}
+	}
+
+	fn expression(&mut self, expr: &mut ExpressionType) {
+		match expr {
+			ExpressionType::None => self.none(),
+			ExpressionType::String(ref mut s) => self.string(s),
+			ExpressionType::Number(ref mut n) => self.number(n),
+			ExpressionType::Boolean(ref mut b) => self.boolean(b),
+			ExpressionType::Block(ref mut block) => self.block(block),
+			ExpressionType::Function(ref mut f) => self.function(f),
+			ExpressionType::Code(ref mut block) => self.block(block),
+			ExpressionType::Array(ref mut array) => self.array(array),
+			ExpressionType::Access(ref mut access) => self.access(access),
+			ExpressionType::StructCreate(ref mut s) => self.struct_create(s),
+			ExpressionType::RPNAccess(ref mut expr) => self.expression(&mut expr.0),
+			ExpressionType::Index(ref mut index) => self.index(index),
+			ExpressionType::Assignment(ref mut assignment) => self.assignment(assignment),
+			ExpressionType::Unary(_, ref mut expr) => self.expression(&mut expr.0),
+			ExpressionType::Binary(ref mut left, _, ref mut right) => {
+				self.expression(&mut left.0);
+				self.expression(&mut right.0);
+			},
+			ExpressionType::Call(ref mut call) => self.call(call),
+			ExpressionType::IfChain(ref mut chain) => self.if_chain(chain),
+			ExpressionType::Switch(ref mut switch) => self.switch(switch),
+			ExpressionType::While(ref mut while_loop) => self.while_loop(while_loop),
+			ExpressionType::For(ref mut for_loop) => self.for_loop(for_loop),
+			ExpressionType::Return(ref mut expr) => {
+				if let Some(expr) = expr {
+					self.expression(&mut expr.0)
+				}
+			},
+			ExpressionType::Break(ref mut expr) => {
+				if let Some(expr) = expr {
+					self.expression(&mut expr.0)
+				}
+			},
+			ExpressionType::Use(ref mut us) => self.template_use(us),
+			ExpressionType::Component(ref mut component) => self.component(component),
+			ExpressionType::Animation(ref mut animation) => self.animation(animation),
+		}
+	}
+
+	fn statement(&mut self, stmt: &mut Statement) {
+		match stmt.0 {
+			StatementType::Expression(ref mut expr) => self.expression(expr),
+			StatementType::Declaration(ref mut var) => self.var(var),
+		}
+	}
+
+	fn none(&mut self) {}
+
+	fn string(&mut self, _s: &mut String) {}
+
+	fn number(&mut self, _n: &mut f64) {}
+
+	fn boolean(&mut self, _b: &mut bool) {}
+
+	fn ty(&mut self, _ty: &mut Type) {}
+
+	fn var_entry(&mut self, entry: &mut VarEntry) {
+		self.ty(&mut entry.ty);
+		if let Some(ref mut expr) = entry.default {
+			self.expression(&mut expr.0);
+		}
+	}
+
+	fn var(&mut self, var: &mut Variable) {
+		if let Some(ref mut expr) = var.value {
+			self.expression(&mut expr.0);
+		}
+	}
+
+	fn struct_create(&mut self, create: &mut StructCreate) {
+		self.ty(&mut create.ty);
+		for value in create.values.iter_mut() {
+			self.expression(&mut value.1 .0);
+		}
+	}
+
+	fn block(&mut self, block: &mut Block) {
+		for stmt in block.statements.iter_mut() {
+			self.statement(stmt);
+		}
+
+		if let Some(ref mut expr) = block.expression {
+			self.expression(&mut expr.0);
+		}
+	}
+
+	fn array(&mut self, array: &mut Vec<Expression>) {
+		for expr in array {
+			self.expression(&mut expr.0);
+		}
+	}
+
+	fn function(&mut self, f: &mut Function) {
+		for arg in f.args.iter_mut() {
+			self.var_entry(arg);
+		}
+
+		if let Some(ref mut ty) = f.ret {
+			self.ty(ty);
+		}
+
+		self.block(&mut f.block);
+	}
+
+	fn access(&mut self, _access: &mut Access) {}
+
+	fn index(&mut self, index: &mut Index) {
+		self.expression(&mut index.array.0);
+		self.expression(&mut index.index.0);
+	}
+
+	fn assignment(&mut self, assign: &mut Assignment) {
+		match assign.target {
+			AssignmentTarget::Var(ref mut access) => self.access(access),
+			AssignmentTarget::RPNVar(ref mut rpn) => self.expression(&mut rpn.0),
+			AssignmentTarget::Index(ref mut access, ref mut index) => {
+				self.access(access);
+				self.expression(&mut index.0);
+			},
+		};
+
+		self.expression(&mut assign.value.0);
+	}
+
+	fn call(&mut self, call: &mut Call) {
+		self.expression(&mut call.callee.0);
+		for arg in call.args.iter_mut() {
+			self.expression(&mut arg.0);
+		}
+	}
+
+	fn if_chain(&mut self, chain: &mut IfChain) {
+		for f in chain.ifs.iter_mut() {
+			self.expression(&mut f.0 .0);
+			self.block(&mut f.1);
+		}
+
+		if let Some(ref mut e) = chain.else_part {
+			self.block(&mut e.0);
+		}
+	}
+
+	fn switch(&mut self, switch: &mut Switch) {
+		self.expression(&mut switch.on.0);
+		for case in switch.cases.iter_mut() {
+			self.expression(&mut case.value.0);
+			self.expression(&mut case.code.0);
+		}
+	}
+
+	fn for_loop(&mut self, _for_loop: &mut For) {}
+
+	fn while_loop(&mut self, _while_loop: &mut While) {}
+
+	fn template_use(&mut self, us: &mut Use) {
+		for arg in us.args.iter_mut() {
+			self.expression(&mut arg.1 .0);
+		}
+	}
+
+	fn component(&mut self, component: &mut Component) {
+		self.expression(&mut component.name.0);
+		if let Some(ref mut node) = component.node {
+			self.expression(&mut node.0);
+		}
+		for stmt in component.block.iter_mut() {
+			self.statement(stmt);
+		}
+	}
+
+	fn animation(&mut self, animation: &mut Animation) {
+		self.expression(&mut animation.name.0);
+		self.expression(&mut animation.length.0);
+		self.expression(&mut animation.lag.0);
+		self.expression(&mut animation.code.0);
+	}
+}

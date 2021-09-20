@@ -58,7 +58,7 @@ where
 	mode: ParserMode,
 	file: &'a [String],
 	lexer: Peekable<Lexer<'b>>,
-	type_map: &'b mut ItemMap<'a>,
+	item_map: &'b mut ItemMap<'a>,
 	diagnostics: &'b mut Vec<Diagnostic>,
 }
 
@@ -249,7 +249,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 			mode,
 			file,
 			lexer: lexer.peekable(),
-			type_map,
+			item_map: type_map,
 			diagnostics,
 		}
 	}
@@ -365,7 +365,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 						});
 						template.1 = self.loc(merge_range!(token.1, &template.1.range));
 						items.push(Item(
-							ItemType::Template(self.type_map.add_template(template.0)),
+							ItemType::Template(self.item_map.add_template(template.0)),
 							template.1,
 						));
 					},
@@ -435,7 +435,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 							continue 'w;
 						});
 						items.push(Item(
-							ItemType::Function(ident, func.0),
+							ItemType::Function(ident, self.item_map.add_function(func.0)),
 							self.loc(merge_range!(token.1, func.1.range)),
 						));
 					},
@@ -588,7 +588,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 
 		if errors.len() == 0 {
 			range = merge_range!(range, expect!(self, TokenType::RightBrace, "expected `}`"));
-			Ok(Item(ItemType::Enum(self.type_map.add_enum(item)), self.loc(range)))
+			Ok(Item(ItemType::Enum(self.item_map.add_enum(item)), self.loc(range)))
 		} else {
 			let mut iter = errors.into_iter();
 			let ret = Err(iter.next().unwrap());
@@ -618,7 +618,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 		}
 
 		Ok(Item(
-			ItemType::Struct(self.type_map.add_struct(Struct { name, fields })),
+			ItemType::Struct(self.item_map.add_struct(Struct { name, fields })),
 			{
 				let temp = expect!(self, TokenType::RightBrace, "expected `}`");
 				self.loc(merge_range!(range, temp))
@@ -1471,10 +1471,9 @@ impl<'a, 'b> Parser<'a, 'b> {
 			TokenType::Struct => Some(&ParseRule {
 				prefix: Some(&|p, mode| {
 					let range = next!(p).1;
-					let ty = UserType {
-						path: p.parse_path()?,
-						resolved: None,
-					};
+					let path = p.parse_path()?;
+					let r = path.1.clone();
+					let ty = Type(TypeType::User(UserType { path, resolved: None }), r);
 					if mode != ExpressionParseMode::Template {
 						let values = p.parse_values(mode)?;
 						Ok(Expression(

@@ -1,4 +1,4 @@
-use crate::ast::{Enum, Struct, Template};
+use crate::ast::{Enum, Function, Struct, Template};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct StructId(usize);
@@ -9,10 +9,14 @@ pub struct EnumId(usize);
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TemplateId(usize);
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FunctionId(usize);
+
 pub struct ItemMap<'a> {
 	structs: Vec<Struct<'a>>,
 	enums: Vec<Enum<'a>>,
 	templates: Vec<Template<'a>>,
+	functions: Vec<Function<'a>>,
 }
 
 impl<'a> ItemMap<'a> {
@@ -21,6 +25,7 @@ impl<'a> ItemMap<'a> {
 			structs: Vec::new(),
 			enums: Vec::new(),
 			templates: Vec::new(),
+			functions: Vec::new(),
 		}
 	}
 
@@ -42,6 +47,12 @@ impl<'a> ItemMap<'a> {
 		TemplateId(id)
 	}
 
+	pub fn add_function(&mut self, f: Function<'a>) -> FunctionId {
+		let id = self.functions.len();
+		self.functions.push(f);
+		FunctionId(id)
+	}
+
 	pub fn get_struct(&self, id: StructId) -> &Struct<'a> { &self.structs[id.0] }
 
 	pub fn get_struct_mut(&mut self, id: StructId) -> &mut Struct<'a> { &mut self.structs[id.0] }
@@ -53,4 +64,8 @@ impl<'a> ItemMap<'a> {
 	pub fn get_template(&self, id: TemplateId) -> &Template<'a> { &self.templates[id.0] }
 
 	pub fn get_template_mut(&mut self, id: TemplateId) -> &mut Template<'a> { &mut self.templates[id.0] }
+
+	pub fn get_function(&self, id: FunctionId) -> &Function<'a> { &self.functions[id.0] }
+
+	pub fn get_function_mut(&mut self, id: FunctionId) -> &mut Function<'a> { &mut self.functions[id.0] }
 }
