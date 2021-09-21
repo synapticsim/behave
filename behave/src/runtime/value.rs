@@ -22,15 +22,13 @@ pub enum RuntimeType<'a> {
 	Num,
 	Str,
 	Bool,
-	Code,
 	Struct(&'a Struct<'a>),
 	Enum(&'a Enum<'a>),
 	Array(Box<RuntimeType<'a>>),
 	Function(RuntimeFunctionType<'a>),
 	None,
-	Component,
-	Animation,
-	TemplateBlock,
+	Code,
+	TemplateValue,
 }
 
 impl<'a> RuntimeType<'a> {
@@ -39,13 +37,13 @@ impl<'a> RuntimeType<'a> {
 			TypeType::Num => Self::Num,
 			TypeType::Str => Self::Str,
 			TypeType::Bool => Self::Bool,
-			TypeType::Code => Self::Code,
 			TypeType::User(ref u) => match u.resolved.unwrap() {
 				ResolvedType::Struct(id) => Self::Struct(item_map.get_struct(id)),
 				ResolvedType::Enum(id) => Self::Enum(item_map.get_enum(id)),
 			},
 			TypeType::Array(ref ty) => Self::Array(Box::new(Self::from(item_map, &ty.0))),
 			TypeType::Function(ref f) => Self::Function(RuntimeFunctionType::from(item_map, f)),
+			TypeType::Code => Self::Code,
 		}
 	}
 }
@@ -71,15 +69,13 @@ impl Display for RuntimeType<'_> {
 			Self::Num => "num".to_string(),
 			Self::Str => "str".to_string(),
 			Self::Bool => "bool".to_string(),
-			Self::Code => "code".to_string(),
 			Self::Struct(s) => s.name.0.clone(),
 			Self::Enum(e) => e.name.0.clone(),
 			Self::Array(ty) => format!("[{}]", *ty),
 			Self::Function(f) => f.to_string(),
 			Self::None => "none".to_string(),
-			Self::Component => "component".to_string(),
-			Self::Animation => "animation".to_string(),
-			Self::TemplateBlock => "template_block".to_string(),
+			Self::TemplateValue => "template value".to_string(),
+			Self::Code => "rpn code".to_string(),
 		};
 		write!(f, "{}", val)
 	}
@@ -115,9 +111,15 @@ pub enum Value<'a> {
 	Array(RuntimeType<'a>, Vec<Value<'a>>),
 	Code(Block<'a>),
 	None,
+	Template(TemplateValue<'a>),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum TemplateValue<'a> {
 	Component(RuntimeComponent<'a>),
 	Animation(RuntimeAnimation<'a>),
-	TemplateBlock(Vec<Value<'a>>),
+	Visibility(Block<'a>),
+	Block(Vec<TemplateValue<'a>>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -136,7 +138,7 @@ pub struct Object<'a> {
 pub struct RuntimeComponent<'a> {
 	pub name: String,
 	pub node: Option<(String, Location<'a>)>,
-	pub items: Vec<Value<'a>>,
+	pub items: Vec<TemplateValue<'a>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -167,11 +169,9 @@ impl<'a> Value<'a> {
 			Self::Object(obj) => RuntimeType::Struct(item_map.get_struct(obj.id)),
 			Self::Enum(access) => RuntimeType::Enum(item_map.get_enum(access.id)),
 			Self::Array(ty, _) => RuntimeType::Array(Box::new(ty.clone())),
-			Self::Code(_) => RuntimeType::Code,
 			Self::None => RuntimeType::None,
-			Self::Component(_) => RuntimeType::Component,
-			Self::Animation(_) => RuntimeType::Animation,
-			Self::TemplateBlock(_) => RuntimeType::TemplateBlock,
+			Self::Template(_) => RuntimeType::TemplateValue,
+			Self::Code(_) => RuntimeType::Code,
 		}
 	}
 }

@@ -1656,6 +1656,16 @@ impl<'a, 'b> Parser<'a, 'b> {
 				}),
 				infix: None,
 			}),
+			TokenType::Visible => Some(&ParseRule {
+				prefix: Some(&|p, _| {
+					let range = next!(p).1;
+					expect!(p, TokenType::If, "expected `if`");
+					let expr = Box::new(p.parse_expression(ExpressionParseMode::Normal)?);
+					let range = merge_range!(range, expr.1.range.clone());
+					Ok(Expression(ExpressionType::Visible(expr), p.loc(range)))
+				}),
+				infix: None,
+			}),
 			_ => None,
 		}
 	}

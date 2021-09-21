@@ -135,10 +135,10 @@ pub enum TypeType<'a> {
 	Num,
 	Str,
 	Bool,
-	Code,
 	User(UserType<'a>),
 	Array(Box<Type<'a>>),
 	Function(FunctionType<'a>),
+	Code,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -191,6 +191,7 @@ pub enum ExpressionType<'a> {
 	Use(Use<'a>),
 	Component(Component<'a>),
 	Animation(Animation<'a>),
+	Visible(Box<Expression<'a>>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -459,6 +460,7 @@ pub trait ASTPass {
 			ExpressionType::Use(ref mut us) => self.template_use(us),
 			ExpressionType::Component(ref mut component) => self.component(component),
 			ExpressionType::Animation(ref mut animation) => self.animation(animation),
+			ExpressionType::Visible(ref mut visible) => self.expression(&mut visible.0),
 		}
 	}
 

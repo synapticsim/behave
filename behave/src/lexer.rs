@@ -250,13 +250,7 @@ lazy_static! {
 		m.insert("while", TokenType::While);
 		m.insert("for", TokenType::For);
 		m.insert("in", TokenType::In);
-		m.insert("component", TokenType::Component);
-		m.insert("on", TokenType::On);
-		m.insert("extern", TokenType::Extern);
 		m.insert("import", TokenType::Import);
-		m.insert("lods", TokenType::Lods);
-		m.insert("behavior", TokenType::Behavior);
-		m.insert("template", TokenType::Template);
 		m.insert("str", TokenType::Str);
 		m.insert("code", TokenType::Code);
 		m.insert("num", TokenType::Num);
@@ -264,14 +258,21 @@ lazy_static! {
 		m.insert("struct", TokenType::Struct);
 		m.insert("enum", TokenType::Enum);
 		m.insert("fn", TokenType::Function);
-		m.insert("animation", TokenType::Animation);
-		m.insert("use", TokenType::Use);
 		m.insert("return", TokenType::Return);
 		m.insert("break", TokenType::Break);
 		m.insert("switch", TokenType::Switch);
 		m.insert("let", TokenType::Let);
 		m.insert("alias", TokenType::Alias);
 		m.insert("none", TokenType::None);
+		m.insert("lods", TokenType::Lods);
+		m.insert("behavior", TokenType::Behavior);
+		m.insert("template", TokenType::Template);
+		m.insert("use", TokenType::Use);
+		m.insert("component", TokenType::Component);
+		m.insert("on", TokenType::On);
+		m.insert("animation", TokenType::Animation);
+		m.insert("visible", TokenType::Visible);
+		m.insert("extern", TokenType::Extern);
 		m
 	};
 }

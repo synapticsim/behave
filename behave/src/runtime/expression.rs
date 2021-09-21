@@ -35,7 +35,16 @@ use crate::ast::{
 };
 use crate::diagnostic::{Diagnostic, Label, Level};
 use crate::items::ItemMap;
-use crate::runtime::value::{CallStack, FunctionValue, Object, RuntimeAnimation, RuntimeComponent, RuntimeType, Value};
+use crate::runtime::value::{
+	CallStack,
+	FunctionValue,
+	Object,
+	RuntimeAnimation,
+	RuntimeComponent,
+	RuntimeType,
+	TemplateValue,
+	Value,
+};
 
 pub enum Flow<'a> {
 	Ok(Value<'a>),
@@ -70,9 +79,20 @@ impl<'a> FromResidual<Result<Infallible, Diagnostic>> for Flow<'a> {
 	fn from_residual(residual: Result<Infallible, Diagnostic>) -> Self { Flow::Err(vec![residual.unwrap_err()]) }
 }
 
+impl<'a> FromResidual<Result<Infallible, Vec<Diagnostic>>> for Flow<'a> {
+	fn from_residual(residual: Result<Infallible, Vec<Diagnostic>>) -> Self { Flow::Err(residual.unwrap_err()) }
+}
+
+#[derive(Clone, Copy)]
+struct ContextualInfo {
+	is_in_component: bool,
+	component_has_node: bool,
+}
+
 pub struct ExpressionEvaluator<'a> {
 	stack: CallStack<'a>,
 	item_map: &'a ItemMap<'a>,
+	info: ContextualInfo,
 }
 
 macro_rules! evaluate {
@@ -129,9 +149,13 @@ macro_rules! evaluate {
 
 impl<'a> ExpressionEvaluator<'a> {
 	pub fn new(item_map: &'a ItemMap<'a>) -> Self {
-		ExpressionEvaluator {
+		Self {
 			stack: CallStack::new(),
 			item_map,
+			info: ContextualInfo {
+				is_in_component: false,
+				component_has_node: false,
+			},
 		}
 	}
 
@@ -143,10 +167,13 @@ impl<'a> ExpressionEvaluator<'a> {
 		evaluate!(self, on expr, type Number error)
 	}
 
-	pub fn evaluate_behavior(&mut self, behavior: &Behavior<'a>) -> Result<Vec<Value<'a>>, Vec<Diagnostic>> {
+	pub fn evaluate_behavior(&mut self, behavior: &Behavior<'a>) -> Result<Vec<TemplateValue<'a>>, Vec<Diagnostic>> {
 		match self.evaluate_template_block(&behavior.0) {
 			Flow::Ok(value) => match value {
-				Value::TemplateBlock(v) => Ok(v),
+				Value::Template(v) => match v {
+					TemplateValue::Block(v) => Ok(v),
+					_ => unreachable!(),
+				},
 				_ => unreachable!(),
 			},
 			Flow::Return(loc, _) => Err(vec![Diagnostic::new(Level::Error, "unexpected return")
@@ -184,7 +211,8 @@ impl<'a> ExpressionEvaluator<'a> {
 			Use(us) => self.evaluate_use(us)?,
 			Component(component) => self.evaluate_component(component)?,
 			Animation(animation) => self.evaluate_animation(animation)?,
-			_ => unreachable!("Cannot evaluate RPN access"),
+			Visible(expr) => self.evaluate_visibility(expr.as_ref())?,
+			RPNAccess(_) => unreachable!("Cannot evaluate RPN access"),
 		})
 	}
 
@@ -1052,25 +1080,34 @@ impl<'a> ExpressionEvaluator<'a> {
 
 	fn evaluate_component(&mut self, component: &Component<'a>) -> Flow<'a> {
 		let mut errors = Vec::new();
+		let old_context = self.info;
+		self.info.is_in_component = true;
 		let c = RuntimeComponent {
 			name: evaluate!(self, on component.name.as_ref(), type String "component name must be of type `str`", errors),
 			node: if let Some(node) = &component.node {
+				self.info.component_has_node = true;
 				Some((
 					evaluate!(self, on node.as_ref(), type String "node name must be of type `str`", errors),
 					node.1.clone(),
 				))
 			} else {
+				self.info.component_has_node = false;
 				None
 			},
-			items: if let Value::TemplateBlock(values) = self.evaluate_template_block(&component.block)? {
-				values
+			items: if let Value::Template(values) = self.evaluate_template_block(&component.block)? {
+				match values {
+					TemplateValue::Block(values) => values,
+					_ => unreachable!(),
+				}
 			} else {
 				unreachable!()
 			},
 		};
 
+		self.info = old_context;
+
 		if errors.len() == 0 {
-			Flow::Ok(Value::Component(c))
+			Flow::Ok(Value::Template(TemplateValue::Component(c)))
 		} else {
 			Flow::Err(errors)
 		}
@@ -1089,9 +1126,23 @@ impl<'a> ExpressionEvaluator<'a> {
 		};
 
 		if errors.len() == 0 {
-			Flow::Ok(Value::Animation(a))
+			Flow::Ok(Value::Template(TemplateValue::Animation(a)))
 		} else {
 			Flow::Err(errors)
+		}
+	}
+
+	fn evaluate_visibility(&mut self, visible: &Expression<'a>) -> Flow<'a> {
+		if !(self.info.is_in_component && self.info.component_has_node) {
+			Flow::Err(vec![Diagnostic::new(Level::Error, "visibility condition has no node")
+				.add_label(Label::primary(
+					"this visibility condition is located outside of a component or in a component without a node",
+					visible.1.clone(),
+				))])
+		} else {
+			Flow::Ok(Value::Template(TemplateValue::Visibility(
+				evaluate!(self, on visible, type Code "visibility condition must be of type `code`")?,
+			)))
 		}
 	}
 
@@ -1120,7 +1171,13 @@ impl<'a> ExpressionEvaluator<'a> {
 				},
 				StatementType::Expression(expr) => {
 					match self.evaluate_expression(&Expression(expr.clone(), stmt.1.clone())) {
-						Flow::Ok(value) => values.push(value),
+						Flow::Ok(value) => {
+							if let Value::Template(value) = value {
+								values.push(value)
+							} else {
+								unreachable!()
+							}
+						},
 						Flow::Err(err) => {
 							errors.extend(err);
 						},
@@ -1133,7 +1190,7 @@ impl<'a> ExpressionEvaluator<'a> {
 		self.stack.end_scope();
 
 		if errors.len() == 0 {
-			Flow::Ok(Value::TemplateBlock(values))
+			Flow::Ok(Value::Template(TemplateValue::Block(values)))
 		} else {
 			Flow::Err(errors)
 		}

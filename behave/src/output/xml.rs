@@ -106,8 +106,8 @@ impl XMLWriter {
 	}
 }
 
-struct IndentIterator {
-	indentation: usize,
+pub struct IndentIterator {
+	pub indentation: usize,
 }
 
 impl Iterator for IndentIterator {

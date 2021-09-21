@@ -3,12 +3,12 @@ use std::collections::HashSet;
 use gltf::json::Root;
 use uuid::Uuid;
 
-use crate::ast::{Behavior, LODs, Location};
+use crate::ast::{Behavior, Block, LODs, Location};
 use crate::diagnostic::{Diagnostic, Label, Level};
 use crate::items::ItemMap;
 use crate::output::xml::XMLWriter;
 use crate::runtime::expression::ExpressionEvaluator;
-use crate::runtime::value::{RuntimeAnimation, RuntimeComponent, Value};
+use crate::runtime::value::{RuntimeAnimation, RuntimeComponent, TemplateValue};
 
 mod xml;
 
@@ -40,7 +40,7 @@ where
 	let mut gltfs = Vec::new();
 
 	generate_lods(loader, lods, &mut gltfs, &mut writer, &mut evaluator, &mut errors);
-	generate_behavior(behavior, &gltfs, &mut writer, &mut evaluator, &mut errors);
+	generate_behavior(behavior, item_map, &gltfs, &mut writer, &mut evaluator, &mut errors);
 
 	if errors.len() == 0 {
 		Ok(writer.end())
@@ -108,8 +108,8 @@ fn generate_lods<'a, F>(
 }
 
 fn generate_behavior<'a>(
-	behavior: Behavior<'a>, gltfs: &[GLTFData], writer: &mut XMLWriter, evaluator: &mut ExpressionEvaluator<'a>,
-	errors: &mut Vec<Diagnostic>,
+	behavior: Behavior<'a>, item_map: &ItemMap<'a>, gltfs: &[GLTFData], writer: &mut XMLWriter,
+	evaluator: &mut ExpressionEvaluator<'a>, errors: &mut Vec<Diagnostic>,
 ) {
 	let values = match evaluator.evaluate_behavior(&behavior) {
 		Ok(v) => v,
@@ -125,15 +125,14 @@ fn generate_behavior<'a>(
 }
 
 fn generate_template_values<'a>(
-	values: Vec<Value<'a>>, gltfs: &[GLTFData], writer: &mut XMLWriter, errors: &mut Vec<Diagnostic>,
+	values: Vec<TemplateValue<'a>>, gltfs: &[GLTFData], writer: &mut XMLWriter, errors: &mut Vec<Diagnostic>,
 ) {
 	for value in values {
 		match value {
-			Value::None => {},
-			Value::Component(component) => generate_component(component, gltfs, writer, errors),
-			Value::Animation(animation) => generate_animation(animation, gltfs, writer, errors),
-			Value::TemplateBlock(values) => generate_template_values(values, gltfs, writer, errors),
-			_ => unreachable!("Only template expressions should be allowed here"),
+			TemplateValue::Component(component) => generate_component(component, gltfs, writer, errors),
+			TemplateValue::Animation(animation) => generate_animation(animation, gltfs, writer, errors),
+			TemplateValue::Visibility(condition) => generate_visibility(condition, writer, errors),
+			TemplateValue::Block(values) => generate_template_values(values, gltfs, writer, errors),
 		}
 	}
 }
@@ -224,7 +223,17 @@ fn generate_animation(
 	writer.data(animation.lag.to_string());
 	writer.end_element();
 	writer.start_element("Code");
-	// Compiled RPN
+	// Compiled RPN goes here
+	writer.end_element();
+	writer.end_element();
+	writer.end_element();
+}
+
+fn generate_visibility(condition: Block, writer: &mut XMLWriter, errors: &mut Vec<Diagnostic>) {
+	writer.start_element("Visibility");
+	writer.start_element("Parameter");
+	writer.start_element("Code");
+	// Compiled RPN goes here
 	writer.end_element();
 	writer.end_element();
 	writer.end_element();
