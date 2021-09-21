@@ -2,15 +2,14 @@ use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 
 use crate::ast::{
-	Animation,
 	Block,
-	Component,
 	Enum,
 	EnumAccess,
 	Function,
 	FunctionType,
 	Ident,
 	InbuiltFunction,
+	Location,
 	ResolvedType,
 	Struct,
 	TypeType,
@@ -31,6 +30,7 @@ pub enum RuntimeType<'a> {
 	None,
 	Component,
 	Animation,
+	TemplateBlock,
 }
 
 impl<'a> RuntimeType<'a> {
@@ -79,6 +79,7 @@ impl Display for RuntimeType<'_> {
 			Self::None => "none".to_string(),
 			Self::Component => "component".to_string(),
 			Self::Animation => "animation".to_string(),
+			Self::TemplateBlock => "template_block".to_string(),
 		};
 		write!(f, "{}", val)
 	}
@@ -114,8 +115,9 @@ pub enum Value<'a> {
 	Array(RuntimeType<'a>, Vec<Value<'a>>),
 	Code(Block<'a>),
 	None,
-	Component(RuntimeComponent),
-	Animation(RuntimeAnimation),
+	Component(RuntimeComponent<'a>),
+	Animation(RuntimeAnimation<'a>),
+	TemplateBlock(Vec<Value<'a>>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -131,10 +133,19 @@ pub struct Object<'a> {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct RuntimeComponent {}
+pub struct RuntimeComponent<'a> {
+	pub name: String,
+	pub node: Option<(String, Location<'a>)>,
+	pub items: Vec<Value<'a>>,
+}
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct RuntimeAnimation {}
+pub struct RuntimeAnimation<'a> {
+	pub name: (String, Location<'a>),
+	pub length: f64,
+	pub lag: f64,
+	pub value: Block<'a>,
+}
 
 impl<'a> Value<'a> {
 	pub fn get_type(&self, item_map: &'a ItemMap<'a>) -> RuntimeType<'a> {
@@ -160,6 +171,7 @@ impl<'a> Value<'a> {
 			Self::None => RuntimeType::None,
 			Self::Component(_) => RuntimeType::Component,
 			Self::Animation(_) => RuntimeType::Animation,
+			Self::TemplateBlock(_) => RuntimeType::TemplateBlock,
 		}
 	}
 }
@@ -197,29 +209,10 @@ impl<'a> CallStack<'a> {
 			.insert(name.0.clone(), value);
 	}
 
-	pub fn set_var(&mut self, name: &Ident) -> Result<&mut Value<'a>, Diagnostic> {
-		if let Some(val) = self
-			.frames
-			.last_mut()
-			.unwrap()
-			.scopes
-			.last_mut()
-			.unwrap()
-			.vars
-			.get_mut(&name.0)
-		{
-			Ok(val)
-		} else {
-			Err(Diagnostic::new(Level::Error, "local variable does not exist")
-				.add_label(Label::primary("accessed here", name.1.clone())))
-		}
-	}
-
-	pub fn var(&self, name: &Ident) -> Result<Value<'a>, Diagnostic> {
-		let frame = self.frames.last().unwrap();
-		for scope in frame.scopes.iter().rev() {
-			if let Some(value) = scope.vars.get(&name.0) {
-				return Ok(value.clone());
+	pub fn var(&mut self, name: &Ident) -> Result<&mut Value<'a>, Diagnostic> {
+		for scope in self.frames.last_mut().unwrap().scopes.iter_mut().rev() {
+			if let Some(val) = scope.vars.get_mut(&name.0) {
+				return Ok(val);
 			}
 		}
 

@@ -1,12 +1,13 @@
 use std::collections::HashMap;
+use std::convert::Infallible;
 use std::ops::{ControlFlow, FromResidual, Try};
-use std::process::id;
 
 use crate::ast::{
 	Access,
 	Animation,
 	Assignment,
 	AssignmentTarget,
+	Behavior,
 	BinaryOperator,
 	Block,
 	Call,
@@ -16,7 +17,6 @@ use crate::ast::{
 	For,
 	FunctionAccess,
 	GlobalAccess,
-	Ident,
 	IfChain,
 	InbuiltFunction,
 	Index,
@@ -24,6 +24,7 @@ use crate::ast::{
 	Path,
 	ResolvedAccess,
 	ResolvedType,
+	Statement,
 	StatementType,
 	StructCreate,
 	Switch,
@@ -34,7 +35,7 @@ use crate::ast::{
 };
 use crate::diagnostic::{Diagnostic, Label, Level};
 use crate::items::ItemMap;
-use crate::runtime::value::{CallStack, FunctionValue, Object, RuntimeType, Value};
+use crate::runtime::value::{CallStack, FunctionValue, Object, RuntimeAnimation, RuntimeComponent, RuntimeType, Value};
 
 pub enum Flow<'a> {
 	Ok(Value<'a>),
@@ -61,17 +62,25 @@ impl FromResidual for Flow<'_> {
 	fn from_residual(residual: <Self as Try>::Residual) -> Self { residual }
 }
 
+impl<'a> FromResidual<Result<Infallible, Flow<'a>>> for Flow<'a> {
+	fn from_residual(residual: Result<Infallible, Flow<'a>>) -> Self { residual.unwrap_err() }
+}
+
+impl<'a> FromResidual<Result<Infallible, Diagnostic>> for Flow<'a> {
+	fn from_residual(residual: Result<Infallible, Diagnostic>) -> Self { Flow::Err(vec![residual.unwrap_err()]) }
+}
+
 pub struct ExpressionEvaluator<'a> {
 	stack: CallStack<'a>,
 	item_map: &'a ItemMap<'a>,
 }
 
 macro_rules! evaluate {
-	($self:expr,on $expr:expr,type $ty:ident $expect:literal) => {
+	($self:expr,on $expr:expr,type $ty:ident $error:expr) => {
 		match $self.evaluate_expression($expr) {
 			Flow::Ok(value) => match value {
 				Value::$ty(s) => Ok(s),
-				value => Err(vec![Diagnostic::new(Level::Error, $expect).add_label(Label::primary(
+				value => Err(vec![Diagnostic::new(Level::Error, $error).add_label(Label::primary(
 					format!("expression result is of type `{}`", value.get_type($self.item_map)),
 					$expr.1.clone(),
 				))]),
@@ -81,6 +90,39 @@ macro_rules! evaluate {
 			Flow::Break(loc, _) => Err(vec![Diagnostic::new(Level::Error, "unexpected break")
 				.add_label(Label::primary("break expression here `{}`", loc))]),
 			Flow::Err(err) => Err(err),
+		}
+	};
+
+	($self:expr,on $expr:expr,type $ty:ident $error:expr, $errors:expr) => {
+		match $self.evaluate_expression($expr) {
+			Flow::Ok(value) => match value {
+				Value::$ty(s) => s,
+				value => {
+					$errors.push(Diagnostic::new(Level::Error, $error).add_label(Label::primary(
+						format!("expression result is of type `{}`", value.get_type($self.item_map)),
+						$expr.1.clone(),
+					)));
+					Default::default()
+				},
+			},
+			Flow::Return(loc, _) => {
+				$errors.push(
+					Diagnostic::new(Level::Error, "unexpected return")
+						.add_label(Label::primary("return expression here `{}`", loc)),
+				);
+				Default::default()
+			},
+			Flow::Break(loc, _) => {
+				$errors.push(
+					Diagnostic::new(Level::Error, "unexpected break")
+						.add_label(Label::primary("break expression here `{}`", loc)),
+				);
+				Default::default()
+			},
+			Flow::Err(err) => {
+				$errors.extend(err);
+				Default::default()
+			},
 		}
 	};
 }
@@ -93,12 +135,26 @@ impl<'a> ExpressionEvaluator<'a> {
 		}
 	}
 
-	pub fn evaluate_as_string(&mut self, expr: &Expression<'a>) -> Result<String, Vec<Diagnostic>> {
-		evaluate!(self, on expr, type String "expected string")
+	pub fn evaluate_as_string(&mut self, expr: &Expression<'a>, error: &str) -> Result<String, Vec<Diagnostic>> {
+		evaluate!(self, on expr, type String error)
 	}
 
-	pub fn evaluate_as_number(&mut self, expr: &Expression<'a>) -> Result<f64, Vec<Diagnostic>> {
-		evaluate!(self, on expr, type Number "expected string")
+	pub fn evaluate_as_number(&mut self, expr: &Expression<'a>, error: &str) -> Result<f64, Vec<Diagnostic>> {
+		evaluate!(self, on expr, type Number error)
+	}
+
+	pub fn evaluate_behavior(&mut self, behavior: &Behavior<'a>) -> Result<Vec<Value<'a>>, Vec<Diagnostic>> {
+		match self.evaluate_template_block(&behavior.0) {
+			Flow::Ok(value) => match value {
+				Value::TemplateBlock(v) => Ok(v),
+				_ => unreachable!(),
+			},
+			Flow::Return(loc, _) => Err(vec![Diagnostic::new(Level::Error, "unexpected return")
+				.add_label(Label::primary("return expression here `{}`", loc))]),
+			Flow::Break(loc, _) => Err(vec![Diagnostic::new(Level::Error, "unexpected break")
+				.add_label(Label::primary("break expression here `{}`", loc))]),
+			Flow::Err(err) => Err(err),
+		}
 	}
 
 	fn evaluate_expression(&mut self, expr: &Expression<'a>) -> Flow<'a> {
@@ -181,6 +237,49 @@ impl<'a> ExpressionEvaluator<'a> {
 		}
 	}
 
+	fn value<'b>(
+		stack: &'b mut CallStack<'a>, item_map: &ItemMap<'a>, path: &Path<'a>,
+	) -> Result<&'b mut Value<'a>, Diagnostic> {
+		match stack.var(&path.0[0]) {
+			Ok(val) => {
+				if path.0.len() > 1 {
+					let mut fields = path.0[1..].iter();
+					let mut value = val;
+					while let Some(ident) = fields.next() {
+						if let Value::Object(ref mut object) = value {
+							value = if let Some(field) = object.fields.get_mut(&ident.0) {
+								field
+							} else {
+								return Err(Diagnostic::new(Level::Error, "missing field").add_label(Label::primary(
+									format!(
+										"type `{}` does not have a field `{}`",
+										RuntimeType::Struct(item_map.get_struct(object.id)),
+										ident.0
+									),
+									ident.1.clone(),
+								)));
+							}
+						} else {
+							return Err(Diagnostic::new(Level::Error, "type does not have fields").add_label(
+								Label::primary(
+									format!(
+										"the variable has a result of type `{}`, which does not have fields",
+										value.get_type(item_map)
+									),
+									ident.1.clone(),
+								),
+							));
+						}
+					}
+					Ok(value)
+				} else {
+					Ok(val)
+				}
+			},
+			Err(err) => Err(err),
+		}
+	}
+
 	fn evaluate_access(&mut self, access: &Access<'a>) -> Flow<'a> {
 		match access.resolved.as_ref().unwrap() {
 			ResolvedAccess::Global(g) => match g {
@@ -190,45 +289,107 @@ impl<'a> ExpressionEvaluator<'a> {
 				})),
 				GlobalAccess::Enum(e) => Flow::Ok(Value::Enum(*e)),
 			},
-			ResolvedAccess::Local => match self.stack.var(&access.path.0[0]) {
-				Ok(val) => {
-					if access.path.0.len() > 1 {
-						let mut fields = access.path.0[1..].iter();
-						let mut value = val;
-						while let Some(ident) = fields.next() {
-							if let Value::Object(ref mut object) = value {
-								value = if let Some(field) = object.fields.remove(&ident.0) {
-									field
-								} else {
-									return Flow::Err(vec![Diagnostic::new(Level::Error, "missing field").add_label(
-										Label::primary(
-											format!(
-												"type `{}` does not have a field `{}`",
-												RuntimeType::Struct(self.item_map.get_struct(object.id)),
-												ident.0
-											),
-											ident.1.clone(),
-										),
-									)]);
-								}
-							} else {
-								return Flow::Err(vec![Diagnostic::new(Level::Error, "type does not have fields")
-									.add_label(Label::primary(
-										format!(
-											"the variable has a result of type `{}`, which does not have fields",
-											value.get_type(&self.item_map)
-										),
-										ident.1.clone(),
-									))]);
-							}
-						}
-						Flow::Ok(value)
-					} else {
-						Flow::Ok(val)
-					}
-				},
+			ResolvedAccess::Local => match Self::value(&mut self.stack, &self.item_map, &access.path) {
+				Ok(value) => Flow::Ok(value.clone()),
 				Err(err) => Flow::Err(vec![err]),
 			},
+		}
+	}
+
+	fn evaluate_assignment(&mut self, assignment: &Assignment<'a>) -> Flow<'a> {
+		let value = self.evaluate_expression(assignment.value.as_ref())?;
+		match &assignment.target {
+			AssignmentTarget::Var(access) => match access.resolved.as_ref().unwrap() {
+				ResolvedAccess::Global(g) => match g {
+					GlobalAccess::Function(_) => {
+						Flow::Err(vec![Diagnostic::new(Level::Error, "cannot assign to global function")
+							.add_label(Label::primary("tried to assign here", access.path.1.clone()))])
+					},
+					GlobalAccess::Enum(_) => {
+						Flow::Err(vec![Diagnostic::new(Level::Error, "cannot assign to enum variant")
+							.add_label(Label::primary("tried to assign here", access.path.1.clone()))])
+					},
+				},
+				ResolvedAccess::Local => {
+					let val = Self::value(&mut self.stack, &self.item_map, &access.path)?;
+					let var_ty = val.get_type(&self.item_map);
+					let val_ty = value.get_type(&self.item_map);
+					if var_ty == val_ty {
+						*val = value.clone();
+						Flow::Ok(value)
+					} else {
+						Flow::Err(vec![Diagnostic::new(Level::Error, "assignment type mismatch")
+							.add_label(Label::primary(
+								format!("this expression has a result of type `{}`...", val_ty),
+								assignment.value.1.clone(),
+							))
+							.add_label(Label::secondary(
+								format!("...but variable is of type `{}`", var_ty),
+								access.path.1.clone(),
+							))])
+					}
+				},
+			},
+			AssignmentTarget::Index(access, index) => match access.resolved.as_ref().unwrap() {
+				ResolvedAccess::Global(g) => match g {
+					GlobalAccess::Function(_) => {
+						Flow::Err(vec![Diagnostic::new(Level::Error, "cannot assign to global function")
+							.add_label(Label::primary("tried to assign here", access.path.1.clone()))])
+					},
+					GlobalAccess::Enum(_) => {
+						Flow::Err(vec![Diagnostic::new(Level::Error, "cannot assign to enum variant")
+							.add_label(Label::primary("tried to assign here", access.path.1.clone()))])
+					},
+				},
+				ResolvedAccess::Local => {
+					let idx = self.evaluate_expression(index.as_ref())?;
+					let val = Self::value(&mut self.stack, &self.item_map, &access.path)?;
+					if let Value::Array(ty, array) = val {
+						if let Value::Number(idx) = idx {
+							let len = array.len();
+							if let Some(val) = array.into_iter().nth(idx as usize) {
+								if *ty == value.get_type(self.item_map) {
+									*val = value.clone();
+									Flow::Ok(value)
+								} else {
+									Flow::Err(vec![Diagnostic::new(Level::Error, "assignment type mismatch")
+										.add_label(Label::primary(
+											format!(
+												"this expression has a result of type `{}`...",
+												value.get_type(self.item_map)
+											),
+											assignment.value.1.clone(),
+										))
+										.add_label(Label::secondary(
+											format!("...but array is of type `{}`", ty),
+											access.path.1.clone(),
+										))])
+								}
+							} else {
+								Flow::Err(vec![Diagnostic::new(Level::Error, "array index out of bounds")
+									.add_label(Label::primary(
+										format!("array length is {}, but index was {}", len, idx as usize),
+										index.1.clone(),
+									))])
+							}
+						} else {
+							Flow::Err(vec![Diagnostic::new(Level::Error, "array index must be a number")
+								.add_label(Label::primary(
+									format!("expression result is of type `{}`", idx.get_type(self.item_map)),
+									index.1.clone(),
+								))])
+						}
+					} else {
+						Flow::Err(vec![Diagnostic::new(Level::Error, "can only index arrays").add_label(
+							Label::primary(
+								format!("expression result is of type `{}`", val.get_type(self.item_map)),
+								access.path.1.clone(),
+							),
+						)])
+					}
+				},
+			},
+			_ => unreachable!("Cannot assign to RPN variable"),
 		}
 	}
 
@@ -245,7 +406,27 @@ impl<'a> ExpressionEvaluator<'a> {
 
 				for field in s.values.iter() {
 					if let Some(f) = ty.fields.iter().find(|entry| entry.name.0 == field.0 .0) {
-						let value = self.evaluate_expression(&field.1)?;
+						let value = match self.evaluate_expression(&field.1) {
+							Flow::Ok(val) => val,
+							Flow::Return(loc, _) => {
+								errors.push(
+									Diagnostic::new(Level::Error, "unexpected return")
+										.add_label(Label::primary("return expression here `{}`", loc)),
+								);
+								continue;
+							},
+							Flow::Break(loc, _) => {
+								errors.push(
+									Diagnostic::new(Level::Error, "unexpected break")
+										.add_label(Label::primary("break expression here `{}`", loc)),
+								);
+								continue;
+							},
+							Flow::Err(err) => {
+								errors.extend(err);
+								continue;
+							},
+						};
 						let ty = value.get_type(self.item_map);
 						let should = RuntimeType::from(&self.item_map, &f.ty.0);
 						if ty == should {
@@ -430,167 +611,6 @@ impl<'a> ExpressionEvaluator<'a> {
 					index.array.1.clone(),
 				),
 			)])
-		}
-	}
-
-	fn evaluate_assignment(&mut self, assignment: &Assignment<'a>) -> Flow<'a> {
-		let value = self.evaluate_expression(assignment.value.as_ref())?;
-		match &assignment.target {
-			AssignmentTarget::Var(access) => match access.resolved.as_ref().unwrap() {
-				ResolvedAccess::Global(g) => match g {
-					GlobalAccess::Function(_) => {
-						Flow::Err(vec![Diagnostic::new(Level::Error, "cannot assign to global function")
-							.add_label(Label::primary("tried to assign here", access.path.1.clone()))])
-					},
-					GlobalAccess::Enum(_) => {
-						Flow::Err(vec![Diagnostic::new(Level::Error, "cannot assign to enum variant")
-							.add_label(Label::primary("tried to assign here", access.path.1.clone()))])
-					},
-				},
-				ResolvedAccess::Local => match self.stack.set_var(&access.path.0[0]) {
-					Ok(val) => {
-						let val = if access.path.0.len() > 1 {
-							let mut fields = access.path.0[1..].iter();
-							let mut val = val;
-							while let Some(ident) = fields.next() {
-								if let Value::Object(ref mut object) = val {
-									val = if let Some(field) = object.fields.get_mut(&ident.0) {
-										field
-									} else {
-										return Flow::Err(vec![Diagnostic::new(Level::Error, "missing field")
-											.add_label(Label::primary(
-												format!(
-													"type `{}` does not have a field `{}`",
-													RuntimeType::Struct(self.item_map.get_struct(object.id)),
-													ident.0
-												),
-												ident.1.clone(),
-											))]);
-									}
-								} else {
-									return Flow::Err(vec![Diagnostic::new(Level::Error, "type does not have fields")
-										.add_label(Label::primary(
-											format!(
-												"the variable has a result of type `{}`, which does not have fields",
-												val.get_type(&self.item_map)
-											),
-											ident.1.clone(),
-										))]);
-								}
-							}
-							val
-						} else {
-							val
-						};
-						*val = value.clone();
-						Flow::Ok(value)
-					},
-					Err(err) => Flow::Err(vec![err]),
-				},
-			},
-			AssignmentTarget::Index(access, index) => match access.resolved.as_ref().unwrap() {
-				ResolvedAccess::Global(g) => match g {
-					GlobalAccess::Function(_) => {
-						Flow::Err(vec![Diagnostic::new(Level::Error, "cannot assign to global function")
-							.add_label(Label::primary("tried to assign here", access.path.1.clone()))])
-					},
-					GlobalAccess::Enum(_) => {
-						Flow::Err(vec![Diagnostic::new(Level::Error, "cannot assign to enum variant")
-							.add_label(Label::primary("tried to assign here", access.path.1.clone()))])
-					},
-				},
-				ResolvedAccess::Local => {
-					let idx = self.evaluate_expression(index.as_ref())?;
-					match self.stack.set_var(&access.path.0[0]) {
-						Ok(val) => {
-							let val = if access.path.0.len() > 1 {
-								let mut fields = access.path.0[1..].iter();
-								let mut val = val;
-								while let Some(ident) = fields.next() {
-									if let Value::Object(ref mut object) = val {
-										val = if let Some(field) = object.fields.get_mut(&ident.0) {
-											field
-										} else {
-											return Flow::Err(vec![Diagnostic::new(Level::Error, "missing field")
-												.add_label(Label::primary(
-													format!(
-														"type `{}` does not have a field `{}`",
-														RuntimeType::Struct(self.item_map.get_struct(object.id)),
-														ident.0
-													),
-													ident.1.clone(),
-												))]);
-										}
-									} else {
-										return Flow::Err(vec![Diagnostic::new(
-											Level::Error,
-											"type does not have fields",
-										)
-										.add_label(Label::primary(
-											format!(
-												"the variable has a result of type `{}`, which does not have fields",
-												val.get_type(&self.item_map)
-											),
-											ident.1.clone(),
-										))]);
-									}
-								}
-								val
-							} else {
-								val
-							};
-							if let Value::Array(ty, array) = val {
-								if let Value::Number(idx) = idx {
-									let len = array.len();
-									if let Some(val) = array.into_iter().nth(idx as usize) {
-										if *ty == value.get_type(self.item_map) {
-											*val = value.clone();
-											Flow::Ok(value)
-										} else {
-											Flow::Err(vec![Diagnostic::new(
-												Level::Error,
-												"mismatch in array assignment type",
-											)
-											.add_label(Label::primary(
-												format!(
-													"this expression has a result of type `{}`...",
-													value.get_type(self.item_map)
-												),
-												assignment.value.1.clone(),
-											))
-											.add_label(Label::secondary(
-												format!("...but array is of type `{}`", ty),
-												access.path.1.clone(),
-											))])
-										}
-									} else {
-										Flow::Err(vec![Diagnostic::new(Level::Error, "array index out of bounds")
-											.add_label(Label::primary(
-												format!("array length is {}, but index was {}", len, idx as usize),
-												index.1.clone(),
-											))])
-									}
-								} else {
-									Flow::Err(vec![Diagnostic::new(Level::Error, "array index must be a number")
-										.add_label(Label::primary(
-											format!("expression result is of type `{}`", idx.get_type(self.item_map)),
-											index.1.clone(),
-										))])
-								}
-							} else {
-								Flow::Err(vec![Diagnostic::new(Level::Error, "can only index arrays").add_label(
-									Label::primary(
-										format!("expression result is of type `{}`", val.get_type(self.item_map)),
-										access.path.1.clone(),
-									),
-								)])
-							}
-						},
-						Err(err) => Flow::Err(vec![err]),
-					}
-				},
-			},
-			_ => unreachable!("Cannot assign to RPN variable"),
 		}
 	}
 
@@ -930,11 +950,194 @@ impl<'a> ExpressionEvaluator<'a> {
 		}
 	}
 
-	fn evaluate_use(&mut self, us: &Use<'a>) -> Flow<'a> { todo!("Use not implemented") }
+	fn evaluate_use(&mut self, us: &Use<'a>) -> Flow<'a> {
+		let mut errors = Vec::new();
+		let mut args = HashMap::new();
 
-	fn evaluate_component(&mut self, component: &Component<'a>) -> Flow<'a> { todo!("Component not implemented") }
+		let template = self.item_map.get_template(us.template.resolved.unwrap());
 
-	fn evaluate_animation(&mut self, animation: &Animation<'a>) -> Flow<'a> { todo!("Animation not implemented") }
+		for field in us.args.iter() {
+			if let Some(f) = template.args.iter().find(|entry| entry.name.0 == field.0 .0) {
+				let value = match self.evaluate_expression(&field.1) {
+					Flow::Ok(val) => val,
+					Flow::Return(loc, _) => {
+						errors.push(
+							Diagnostic::new(Level::Error, "unexpected return")
+								.add_label(Label::primary("return expression here `{}`", loc)),
+						);
+						continue;
+					},
+					Flow::Break(loc, _) => {
+						errors.push(
+							Diagnostic::new(Level::Error, "unexpected break")
+								.add_label(Label::primary("break expression here `{}`", loc)),
+						);
+						continue;
+					},
+					Flow::Err(err) => {
+						errors.extend(err);
+						continue;
+					},
+				};
+				let ty = value.get_type(self.item_map);
+				let should = RuntimeType::from(&self.item_map, &f.ty.0);
+				if ty == should {
+					args.insert(field.0 .0.clone(), value);
+				} else {
+					errors.push(
+						Diagnostic::new(Level::Error, "field type mismatch")
+							.add_label(Label::primary(
+								format!("this expression has a result of type `{}`...", ty),
+								field.1 .1.clone(),
+							))
+							.add_label(Label::secondary(
+								format!("...but field has a type `{}`", should),
+								f.ty.1.clone(),
+							)),
+					);
+					continue;
+				}
+			} else {
+				errors.push(
+					Diagnostic::new(Level::Error, "argument does not exist").add_label(Label::primary(
+						format!("this argument does not exist on template `{}`", template.name.0),
+						field.0 .1.clone(),
+					)),
+				);
+				continue;
+			}
+		}
+
+		for field in template.args.iter() {
+			if !args.contains_key(&field.name.0) {
+				if let Some(default) = &field.default {
+					let value = self.evaluate_expression(default.as_ref())?;
+					let ty = value.get_type(self.item_map);
+					let should = RuntimeType::from(&self.item_map, &field.ty.0);
+					if ty == should {
+						args.insert(field.name.0.clone(), value);
+					} else {
+						errors.push(
+							Diagnostic::new(Level::Error, "argument type mismatch")
+								.add_label(Label::primary(
+									format!("this default expression has a result of type `{}`...", ty),
+									default.1.clone(),
+								))
+								.add_label(Label::secondary(
+									format!("...but argument has a type `{}`", should),
+									field.ty.1.clone(),
+								)),
+						);
+						continue;
+					}
+				} else {
+					errors.push(
+						Diagnostic::new(Level::Error, "argument missing")
+							.add_label(Label::primary("this argument is missing", field.name.1.clone())),
+					);
+					continue;
+				}
+			}
+		}
+
+		if errors.len() == 0 {
+			self.stack.call(args.into_iter());
+			let ret = self.evaluate_template_block(&template.block);
+			self.stack.end_call();
+			ret
+		} else {
+			Flow::Err(errors)
+		}
+	}
+
+	fn evaluate_component(&mut self, component: &Component<'a>) -> Flow<'a> {
+		let mut errors = Vec::new();
+		let c = RuntimeComponent {
+			name: evaluate!(self, on component.name.as_ref(), type String "component name must be of type `str`", errors),
+			node: if let Some(node) = &component.node {
+				Some((
+					evaluate!(self, on node.as_ref(), type String "node name must be of type `str`", errors),
+					node.1.clone(),
+				))
+			} else {
+				None
+			},
+			items: if let Value::TemplateBlock(values) = self.evaluate_template_block(&component.block)? {
+				values
+			} else {
+				unreachable!()
+			},
+		};
+
+		if errors.len() == 0 {
+			Flow::Ok(Value::Component(c))
+		} else {
+			Flow::Err(errors)
+		}
+	}
+
+	fn evaluate_animation(&mut self, animation: &Animation<'a>) -> Flow<'a> {
+		let mut errors = Vec::new();
+		let a = RuntimeAnimation {
+			name: (
+				evaluate!(self, on animation.name.as_ref(), type String "animation name must be of type `str`", errors),
+				animation.name.1.clone(),
+			),
+			lag: evaluate!(self, on animation.lag.as_ref(), type Number "animation lag must be of type `num`", errors),
+			length: evaluate!(self, on animation.length.as_ref(), type Number "animation length must be of type `num`", errors),
+			value: evaluate!(self, on animation.value.as_ref(), type Code "animation value must be of type `code`", errors),
+		};
+
+		if errors.len() == 0 {
+			Flow::Ok(Value::Animation(a))
+		} else {
+			Flow::Err(errors)
+		}
+	}
+
+	fn evaluate_template_block(&mut self, block: &[Statement<'a>]) -> Flow<'a> {
+		self.stack.scope();
+
+		let mut errors = Vec::new();
+		let mut values = Vec::new();
+
+		for stmt in block {
+			match &stmt.0 {
+				StatementType::Declaration(var) => {
+					let value = if let Some(expr) = &var.value {
+						match self.evaluate_expression(expr) {
+							Flow::Ok(val) => val,
+							Flow::Err(err) => {
+								errors.extend(err);
+								continue;
+							},
+							flow => return flow,
+						}
+					} else {
+						Value::None
+					};
+					self.stack.new_var(&var.name, value);
+				},
+				StatementType::Expression(expr) => {
+					match self.evaluate_expression(&Expression(expr.clone(), stmt.1.clone())) {
+						Flow::Ok(value) => values.push(value),
+						Flow::Err(err) => {
+							errors.extend(err);
+						},
+						flow => return flow,
+					}
+				},
+			}
+		}
+
+		self.stack.end_scope();
+
+		if errors.len() == 0 {
+			Flow::Ok(Value::TemplateBlock(values))
+		} else {
+			Flow::Err(errors)
+		}
+	}
 
 	fn evaluate_if(&mut self, if_chain: &IfChain<'a>) -> Flow<'a> {
 		for ifs in if_chain.ifs.iter() {
@@ -962,7 +1165,7 @@ impl<'a> ExpressionEvaluator<'a> {
 	fn evaluate_switch(&mut self, switch: &Switch<'a>) -> Flow<'a> {
 		let on = self.evaluate_expression(&switch.on)?;
 		for case in switch.cases.iter() {
-			if on == self.evaluate_expression(&switch.on)? {
+			if on == self.evaluate_expression(&case.value)? {
 				return self.evaluate_expression(&case.code);
 			}
 		}
@@ -1025,7 +1228,7 @@ impl<'a> ExpressionEvaluator<'a> {
 			} else {
 				Flow::Err(vec![Diagnostic::new(
 					Level::Error,
-					"format string must result in type `string`",
+					"format string must be of type `str`",
 				)
 				.add_label(Label::primary(
 					format!("expression has a result of type `{}`", value.get_type(&self.item_map)),

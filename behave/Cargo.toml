@@ -5,4 +5,5 @@ edition = "2021"
 
 [dependencies]
 lazy_static = "1.4.0"
-uuid = { version = "0.8", features = ["v1"] }
+gltf = { git = "https://github.com/Synaptic-Simulations/gltf", features = ["extras", "names"] }
+uuid = { version = "0.8", features = ["v4"] }

@@ -64,7 +64,13 @@ fn compile(options: &Options) -> CompileResult {
 		return CompileResult { files, diagnostics };
 	}
 
-	let result = behave::compile(&main_file, &files);
+	let output_parent = options.output.parent().unwrap();
+
+	let result = behave::compile(&main_file, &files, |file| {
+		let mut path = output_parent.to_path_buf();
+		path.push(file);
+		read_to_string(path).ok()
+	});
 	diagnostics.extend(result.diagnostics);
 	files.push(main_file);
 

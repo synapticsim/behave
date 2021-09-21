@@ -7,12 +7,12 @@ use parser::{Parser, ParserMode};
 use crate::ast::{ASTTree, ASTType, AST};
 use crate::diagnostic::Level;
 use crate::items::ItemMap;
-use crate::runtime::expression::ExpressionEvaluator;
 
 mod ast;
 pub mod diagnostic;
 mod items;
 mod lexer;
+mod output;
 mod parser;
 mod resolve;
 mod runtime;
@@ -40,7 +40,11 @@ pub struct SourceFile {
 /// # Parameters:
 /// `main_file`: The main file of the project.
 /// `files`: Slice of all the other files in the project.
-pub fn compile(main_file: &SourceFile, files: &[SourceFile]) -> CompileResult {
+/// `loader`: File loader that loads files in the output directory for GLTF verification.
+pub fn compile<F>(main_file: &SourceFile, files: &[SourceFile], loader: F) -> CompileResult
+where
+	F: FnMut(&str) -> Option<String>,
+{
 	let mut diagnostics = Vec::new();
 
 	let mut item_map = ItemMap::new();
@@ -61,38 +65,22 @@ pub fn compile(main_file: &SourceFile, files: &[SourceFile]) -> CompileResult {
 		};
 	}
 
-	let mut evaluator = ExpressionEvaluator::new(&item_map);
+	let (lods, behavior) = if let ASTType::Main(lods, behavior) = main.ast_data {
+		(lods, behavior)
+	} else {
+		unreachable!()
+	};
 
-	if let ASTType::Main(lods, behavior) = main.ast_data {
-		for lod in lods.0 {
-			println!(
-				"{:#?}: {:#?}",
-				match evaluator.evaluate_as_number(&lod.min_size) {
-					Ok(v) => v,
-					Err(diag) => {
-						diagnostics.extend(diag);
-						return CompileResult {
-							compiled: None,
-							diagnostics,
-						};
-					},
-				},
-				match evaluator.evaluate_as_string(&lod.file) {
-					Ok(v) => v,
-					Err(diag) => {
-						diagnostics.extend(diag);
-						return CompileResult {
-							compiled: None,
-							diagnostics,
-						};
-					},
-				},
-			);
-		}
-	}
+	let s = match output::generate(loader, &item_map, lods, behavior) {
+		Ok(s) => Some(s),
+		Err(err) => {
+			diagnostics.extend(err);
+			None
+		},
+	};
 
 	CompileResult {
-		compiled: None,
+		compiled: s,
 		diagnostics,
 	}
 }

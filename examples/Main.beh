@@ -1,9 +1,8 @@
 import Imported;
 
 lods {
-    0 -> "LOD 2",
-    50 -> "LOD 1",
-    100 -> "LOD 0"
+    0 -> "SomeModel.gltf",
+    50 -> "SomeModel2.gltf"
 }
 
 behavior {
@@ -12,6 +11,6 @@ behavior {
     }
 
     use Elevators {
-        id: ElevatorID.Left
+        id: ElevatorID.Right
     }
 }

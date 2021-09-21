@@ -1403,7 +1403,11 @@ impl<'a, 'b> Parser<'a, 'b> {
 					let mut range = if_tok.1;
 					let mut chain = IfChain {
 						ifs: vec![{
-							let expr = Box::new(p.parse_expression(mode)?);
+							let expr = Box::new(p.parse_expression(if mode == ExpressionParseMode::RPNCode {
+								ExpressionParseMode::RPNCode
+							} else {
+								ExpressionParseMode::Normal
+							})?);
 							expect!(p, TokenType::LeftBrace, "expected `block` after `if` condition");
 							let block = p.parse_block(mode)?;
 							range = merge_range!(range, block.1.range);
@@ -1636,7 +1640,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 					let code = if let Some(code) = args_iter.find(|val| val.0 .0 == "value") {
 						code
 					} else {
-						return Err(Diagnostic::new(Level::Error, "expected animation code")
+						return Err(Diagnostic::new(Level::Error, "expected animation value")
 							.add_label(Label::primary("here", p.loc(range))));
 					};
 
@@ -1645,7 +1649,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 							name: Box::new(name),
 							length: Box::new(length.1),
 							lag: Box::new(lag.1),
-							code: Box::new(code.1),
+							value: Box::new(code.1),
 						}),
 						p.loc(range),
 					))

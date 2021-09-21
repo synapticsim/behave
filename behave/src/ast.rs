@@ -50,7 +50,7 @@ impl<'a> ASTTree<'a> {
 	}
 }
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
 pub struct Location<'a> {
 	pub range: Range<usize>,
 	pub file: &'a [String],
@@ -290,7 +290,7 @@ pub struct Case<'a> {
 	pub code: Box<Expression<'a>>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Block<'a> {
 	pub statements: Vec<Statement<'a>>,
 	pub expression: Option<Box<Expression<'a>>>,
@@ -353,7 +353,7 @@ pub struct Animation<'a> {
 	pub name: Box<Expression<'a>>,
 	pub length: Box<Expression<'a>>,
 	pub lag: Box<Expression<'a>>,
-	pub code: Box<Expression<'a>>,
+	pub value: Box<Expression<'a>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -597,6 +597,6 @@ pub trait ASTPass {
 		self.expression(&mut animation.name.0);
 		self.expression(&mut animation.length.0);
 		self.expression(&mut animation.lag.0);
-		self.expression(&mut animation.code.0);
+		self.expression(&mut animation.value.0);
 	}
 }

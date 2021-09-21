@@ -1,7 +1,3 @@
-struct Cool {
-    lod_0: num
-}
-
 enum ElevatorID {
     Left = 0,
     Right = 1
@@ -9,22 +5,22 @@ enum ElevatorID {
 
 fn elevator_id_to_string(id: ElevatorID) -> str {
     switch id {
-        ElevatorID.Left -> return "Left",
-        ElevatorID.Right -> return "Right"
-    };
+        ElevatorID.Left -> "Left",
+        ElevatorID.Right -> "Right"
+    }
 }
 
 template Elevators(id: ElevatorID) {
     let name = format("Elevator_{}", elevator_id_to_string(id));
 
-    component name on name {
-        animation name {
-            length: 100,
-            lag: 50,
-            value: @{
-                let position = @"A:ELEVATOR DEFLECTION PCT, percent over 100";
-                position * 0.5 + 0.5
-            }
+    animation name {
+        length: 100,
+        lag: 50,
+        value: @{
+            let position = @"A:ELEVATOR DEFLECTION PCT, percent over 100";
+            position * 0.5 + 0.5
         }
     }
+
+    component name on name {}
 }
