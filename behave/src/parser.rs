@@ -1,7 +1,17 @@
 use std::collections::HashMap;
 use std::{iter::Peekable, ops::Range};
 
-use crate::ast::{Access, Animation, AssignmentTarget, Component, Location, StructCreate, UseTarget, UserType};
+use crate::ast::{
+	Access,
+	Animation,
+	AssignmentTarget,
+	BehaviorExpression,
+	Component,
+	Location,
+	StructCreate,
+	UseTarget,
+	UserType,
+};
 use crate::items::ItemMap;
 use crate::{
 	ast::{
@@ -1171,21 +1181,32 @@ impl<'a, 'b> Parser<'a, 'b> {
 							"component" => {
 								let component = p.parse_component()?;
 								Ok(Expression(
-									ExpressionType::Component(component.0),
+									ExpressionType::Behavior(BehaviorExpression::Component(component.0)),
 									p.loc(merge_range!(next.1, component.1)),
 								))
 							},
 							"animation" => {
 								let animation = p.parse_animation()?;
 								Ok(Expression(
-									ExpressionType::Animation(animation.0),
+									ExpressionType::Behavior(BehaviorExpression::Animation(animation.0)),
 									p.loc(merge_range!(next.1, animation.1)),
 								))
 							},
 							"visibility" => {
 								let expr = Box::new(p.parse_expression(ExpressionParseMode::Normal)?);
 								let range = merge_range!(next.1, expr.1.range.clone());
-								Ok(Expression(ExpressionType::Visible(expr), p.loc(range)))
+								Ok(Expression(
+									ExpressionType::Behavior(BehaviorExpression::Visible(expr)),
+									p.loc(range),
+								))
+							},
+							"emissive" => {
+								let expr = Box::new(p.parse_expression(ExpressionParseMode::Normal)?);
+								let range = merge_range!(next.1, expr.1.range.clone());
+								Ok(Expression(
+									ExpressionType::Behavior(BehaviorExpression::Emissive(expr)),
+									p.loc(range),
+								))
 							},
 							_ => Err(Diagnostic::new(Level::Error, "expected behavior expression")
 								.add_label(Label::unexpected(p.file, &next))),
@@ -1652,25 +1673,33 @@ impl<'a, 'b> Parser<'a, 'b> {
 				infix: None,
 			}),
 			TokenType::Use => Some(&ParseRule {
-				prefix: Some(&|p, _| {
+				prefix: Some(&|p, mode| {
 					let range = next!(p).1;
-					let path = p.parse_path()?;
-					let range = merge_range!(range, path.1.range.clone());
-					let mut usee = Use {
-						template: UseTarget { path, resolved: None },
-						args: Vec::new(),
-					};
-					peek!(p, TokenType::Semicolon, if {
-						return Ok(Expression(ExpressionType::Use(usee), p.loc(range)))
-					});
+					if mode == ExpressionParseMode::Template {
+						let path = p.parse_path()?;
+						let range = merge_range!(range, path.1.range.clone());
+						let mut usee = Use {
+							template: UseTarget { path, resolved: None },
+							args: Vec::new(),
+						};
+						peek!(p, TokenType::Semicolon, if {
+							return Ok(Expression(ExpressionType::Behavior(BehaviorExpression::Use(usee)), p.loc(range)))
+						});
 
-					let args = p.parse_values(ExpressionParseMode::Normal)?;
-					usee.args = args.0;
+						let args = p.parse_values(ExpressionParseMode::Normal)?;
+						usee.args = args.0;
 
-					Ok(Expression(
-						ExpressionType::Use(usee),
-						p.loc(merge_range!(range, args.1.range)),
-					))
+						Ok(Expression(
+							ExpressionType::Behavior(BehaviorExpression::Use(usee)),
+							p.loc(merge_range!(range, args.1.range)),
+						))
+					} else {
+						Err(Diagnostic::new(
+							Level::Error,
+							"a use expression is not allowed outside behavior expressions",
+						)
+						.add_label(Label::primary("unexpected expression", p.loc(range))))
+					}
 				}),
 				infix: None,
 			}),

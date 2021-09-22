@@ -188,10 +188,7 @@ pub enum ExpressionType<'a> {
 	For(For<'a>),
 	Return(Option<Box<Expression<'a>>>),
 	Break(Option<Box<Expression<'a>>>),
-	Use(Use<'a>),
-	Component(Component<'a>),
-	Animation(Animation<'a>),
-	Visible(Box<Expression<'a>>),
+	Behavior(BehaviorExpression<'a>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -217,6 +214,15 @@ pub enum BinaryOperator {
 	Lesser,
 	GreaterThanOrEqual,
 	LesserThanOrEqual,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum BehaviorExpression<'a> {
+	Use(Use<'a>),
+	Component(Component<'a>),
+	Animation(Animation<'a>),
+	Visible(Box<Expression<'a>>),
+	Emissive(Box<Expression<'a>>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -457,10 +463,13 @@ pub trait ASTPass {
 					self.expression(&mut expr.0)
 				}
 			},
-			ExpressionType::Use(ref mut us) => self.template_use(us),
-			ExpressionType::Component(ref mut component) => self.component(component),
-			ExpressionType::Animation(ref mut animation) => self.animation(animation),
-			ExpressionType::Visible(ref mut visible) => self.expression(&mut visible.0),
+			ExpressionType::Behavior(expr) => match expr {
+				BehaviorExpression::Use(ref mut us) => self.template_use(us),
+				BehaviorExpression::Component(ref mut component) => self.component(component),
+				BehaviorExpression::Animation(ref mut animation) => self.animation(animation),
+				BehaviorExpression::Visible(ref mut visible) => self.expression(&mut visible.0),
+				BehaviorExpression::Emissive(ref mut emissive) => self.expression(&mut emissive.0),
+			},
 		}
 	}
 

@@ -119,6 +119,7 @@ pub enum TemplateValue<'a> {
 	Component(RuntimeComponent<'a>),
 	Animation(RuntimeAnimation<'a>),
 	Visibility(Block<'a>),
+	Emissive(Block<'a>),
 	Block(Vec<TemplateValue<'a>>),
 }
 

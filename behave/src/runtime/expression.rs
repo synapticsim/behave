@@ -8,6 +8,7 @@ use crate::ast::{
 	Assignment,
 	AssignmentTarget,
 	Behavior,
+	BehaviorExpression,
 	BinaryOperator,
 	Block,
 	Call,
@@ -208,10 +209,16 @@ impl<'a> ExpressionEvaluator<'a> {
 			StructCreate(s) => self.evaluate_struct(s)?,
 			Return(e) => self.evaluate_return(e.as_deref(), expr.1.clone())?,
 			Break(e) => self.evaluate_break(e.as_deref(), expr.1.clone())?,
-			Use(us) => self.evaluate_use(us)?,
-			Component(component) => self.evaluate_component(component)?,
-			Animation(animation) => self.evaluate_animation(animation)?,
-			Visible(expr) => self.evaluate_visibility(expr.as_ref())?,
+			Behavior(expr) => {
+				use BehaviorExpression::*;
+				match expr {
+					Use(us) => self.evaluate_use(us)?,
+					Component(component) => self.evaluate_component(component)?,
+					Animation(animation) => self.evaluate_animation(animation)?,
+					Visible(expr) => self.evaluate_visibility(expr.as_ref())?,
+					Emissive(expr) => self.evaluate_emissive(expr.as_ref())?,
+				}
+			},
 			RPNAccess(_) => unreachable!("Cannot evaluate RPN access"),
 		})
 	}
@@ -1142,6 +1149,20 @@ impl<'a> ExpressionEvaluator<'a> {
 		} else {
 			Flow::Ok(Value::Template(TemplateValue::Visibility(
 				evaluate!(self, on visible, type Code "visibility condition must be of type `code`")?,
+			)))
+		}
+	}
+
+	fn evaluate_emissive(&mut self, emissive: &Expression<'a>) -> Flow<'a> {
+		if !(self.info.is_in_component && self.info.component_has_node) {
+			Flow::Err(vec![Diagnostic::new(Level::Error, "emissive value has no node")
+				.add_label(Label::primary(
+					"this emissive value is located outside of a component or in a component without a node",
+					emissive.1.clone(),
+				))])
+		} else {
+			Flow::Ok(Value::Template(TemplateValue::Emissive(
+				evaluate!(self, on emissive, type Code "emissive value must be of type `code`")?,
 			)))
 		}
 	}

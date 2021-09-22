@@ -132,6 +132,7 @@ fn generate_template_values<'a>(
 			TemplateValue::Component(component) => generate_component(component, gltfs, writer, errors),
 			TemplateValue::Animation(animation) => generate_animation(animation, gltfs, writer, errors),
 			TemplateValue::Visibility(condition) => generate_visibility(condition, writer, errors),
+			TemplateValue::Emissive(value) => generate_emissive(value, writer, errors),
 			TemplateValue::Block(values) => generate_template_values(values, gltfs, writer, errors),
 		}
 	}
@@ -234,6 +235,21 @@ fn generate_visibility(condition: Block, writer: &mut XMLWriter, errors: &mut Ve
 	writer.start_element("Parameter");
 	writer.start_element("Code");
 	// Compiled RPN goes here
+	writer.end_element();
+	writer.end_element();
+	writer.end_element();
+}
+
+fn generate_emissive(value: Block, writer: &mut XMLWriter, errors: &mut Vec<Diagnostic>) {
+	writer.start_element("Materials");
+	writer.start_element("Emissive");
+	writer.start_element("Parameter");
+	writer.start_element("Code");
+	// Compiled RPN goes here
+	writer.end_element();
+	writer.end_element();
+	writer.start_element("OverrideBaseEmissive");
+	writer.data("True");
 	writer.end_element();
 	writer.end_element();
 	writer.end_element();
