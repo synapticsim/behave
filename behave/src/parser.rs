@@ -1046,6 +1046,59 @@ impl<'a, 'b> Parser<'a, 'b> {
 		))
 	}
 
+	fn parse_component(&mut self) -> Result<(Component<'a>, Range<usize>), Diagnostic> {
+		let name = self.parse_expression(ExpressionParseMode::Normal)?;
+		let node = peek!(self, TokenType::Ident(i) if i == "on", if {
+			Some(Box::new(self.parse_expression(ExpressionParseMode::Normal)?))
+		} else {
+			None
+		});
+		let statements = self.parse_template_block()?;
+		Ok((
+			Component {
+				name: Box::new(name),
+				node,
+				block: statements.0,
+			},
+			statements.1.range,
+		))
+	}
+
+	fn parse_animation(&mut self) -> Result<(Animation<'a>, Range<usize>), Diagnostic> {
+		let name = self.parse_expression(ExpressionParseMode::Normal)?;
+		let args = self.parse_values(ExpressionParseMode::Normal)?;
+		let range = args.1.range;
+		let mut args_iter = args.0.into_iter();
+		let length = if let Some(length) = args_iter.find(|val| val.0 .0 == "length") {
+			length
+		} else {
+			return Err(Diagnostic::new(Level::Error, "expected animation length")
+				.add_label(Label::primary("here", self.loc(range))));
+		};
+		let lag = if let Some(lag) = args_iter.find(|val| val.0 .0 == "lag") {
+			lag
+		} else {
+			return Err(Diagnostic::new(Level::Error, "expected animation lag")
+				.add_label(Label::primary("here", self.loc(range))));
+		};
+		let code = if let Some(code) = args_iter.find(|val| val.0 .0 == "value") {
+			code
+		} else {
+			return Err(Diagnostic::new(Level::Error, "expected animation value")
+				.add_label(Label::primary("here", self.loc(range))));
+		};
+
+		Ok((
+			Animation {
+				name: Box::new(name),
+				length: Box::new(length.1),
+				lag: Box::new(lag.1),
+				value: Box::new(code.1),
+			},
+			range,
+		))
+	}
+
 	fn parse_path(&mut self) -> Result<Path<'a>, Diagnostic> {
 		let mut idents = vec![];
 		let mut range = no_range();
@@ -1100,7 +1153,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 		None
 	}
 
-	fn get_parse_rule(&self, token: &TokenType) -> Option<&ParseRule<'a, 'b>> {
+	fn get_parse_rule<'c>(&self, token: &TokenType) -> Option<&ParseRule<'a, 'b>> {
 		match token {
 			TokenType::At => Some(&ParseRule {
 				prefix: Some(&|p, mode| p.parse_rpn(mode)),
@@ -1108,15 +1161,39 @@ impl<'a, 'b> Parser<'a, 'b> {
 			}),
 			TokenType::Ident(_) => Some(&ParseRule {
 				prefix: Some(&|p, mode| {
-					let path = p.parse_path()?;
-					if mode != ExpressionParseMode::Template {
+					if mode == ExpressionParseMode::Template {
+						let next = next!(p);
+						match if let TokenType::Ident(ref s) = next.0 {
+							s.as_str()
+						} else {
+							unreachable!()
+						} {
+							"component" => {
+								let component = p.parse_component()?;
+								Ok(Expression(
+									ExpressionType::Component(component.0),
+									p.loc(merge_range!(next.1, component.1)),
+								))
+							},
+							"animation" => {
+								let animation = p.parse_animation()?;
+								Ok(Expression(
+									ExpressionType::Animation(animation.0),
+									p.loc(merge_range!(next.1, animation.1)),
+								))
+							},
+							"visibility" => {
+								let expr = Box::new(p.parse_expression(ExpressionParseMode::Normal)?);
+								let range = merge_range!(next.1, expr.1.range.clone());
+								Ok(Expression(ExpressionType::Visible(expr), p.loc(range)))
+							},
+							_ => Err(Diagnostic::new(Level::Error, "expected behavior expression")
+								.add_label(Label::unexpected(p.file, &next))),
+						}
+					} else {
+						let path = p.parse_path()?;
 						let r = path.1.clone();
 						Ok(Expression(ExpressionType::Access(Access { path, resolved: None }), r))
-					} else {
-						Err(
-							Diagnostic::new(Level::Error, "variable access is not allowed in template expressions")
-								.add_label(Label::primary("the variable was accessed here", path.1)),
-						)
 					}
 				}),
 				infix: None,
@@ -1128,7 +1205,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 						Ok(Expression(ExpressionType::None, p.loc(tok.1)))
 					} else {
 						Err(
-							Diagnostic::new(Level::Error, "a none expression is not allowed in template expressions")
+							Diagnostic::new(Level::Error, "a none expression is not allowed in behavior expressions")
 								.add_label(Label::primary("unexpected expression", p.loc(tok.1))),
 						)
 					}
@@ -1158,7 +1235,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 					} else {
 						Err(Diagnostic::new(
 							Level::Error,
-							"a string expression is not allowed in template expressions",
+							"a string expression is not allowed in behavior expressions",
 						)
 						.add_label(Label::primary("unexpected expression", string.1)))
 					}
@@ -1173,7 +1250,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 					} else {
 						Err(Diagnostic::new(
 							Level::Error,
-							"a boolean expression is not allowed in template expressions",
+							"a boolean expression is not allowed in behavior expressions",
 						)
 						.add_label(Label::primary("unexpected expression", boolean.1)))
 					}
@@ -1193,7 +1270,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 					} else {
 						Err(Diagnostic::new(
 							Level::Error,
-							"a grouping expression is not allowed in template expressions",
+							"a grouping expression is not allowed in behavior expressions",
 						)
 						.add_label(Label::primary("unexpected expression", expr.1)))
 					}
@@ -1253,7 +1330,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 						} else {
 							Err(Diagnostic::new(
 								Level::Error,
-								"an array expression is not allowed in template expressions",
+								"an array expression is not allowed in behavior expressions",
 							)
 							.add_label(Label::primary("unexpected expression", index.1)))
 						}
@@ -1594,75 +1671,6 @@ impl<'a, 'b> Parser<'a, 'b> {
 						ExpressionType::Use(usee),
 						p.loc(merge_range!(range, args.1.range)),
 					))
-				}),
-				infix: None,
-			}),
-			TokenType::Component => Some(&ParseRule {
-				prefix: Some(&|p, _| {
-					let range = next!(p).1;
-					let name = p.parse_expression(ExpressionParseMode::Normal)?;
-					let node = peek!(p, TokenType::On, if {
-						Some(Box::new(p.parse_expression(ExpressionParseMode::Normal)?))
-					} else {
-						None
-					});
-					let statements = p.parse_template_block()?;
-					Ok(Expression(
-						ExpressionType::Component(Component {
-							name: Box::new(name),
-							node,
-							block: statements.0,
-						}),
-						p.loc(merge_range!(range, statements.1.range)),
-					))
-				}),
-				infix: None,
-			}),
-			TokenType::Animation => Some(&ParseRule {
-				prefix: Some(&|p, _| {
-					let range = next!(p).1;
-					let name = p.parse_expression(ExpressionParseMode::Normal)?;
-					let args = p.parse_values(ExpressionParseMode::Normal)?;
-					let range = merge_range!(range, args.1.range);
-					let mut args_iter = args.0.into_iter();
-					let length = if let Some(length) = args_iter.find(|val| val.0 .0 == "length") {
-						length
-					} else {
-						return Err(Diagnostic::new(Level::Error, "expected animation length")
-							.add_label(Label::primary("here", p.loc(range))));
-					};
-					let lag = if let Some(lag) = args_iter.find(|val| val.0 .0 == "lag") {
-						lag
-					} else {
-						return Err(Diagnostic::new(Level::Error, "expected animation lag")
-							.add_label(Label::primary("here", p.loc(range))));
-					};
-					let code = if let Some(code) = args_iter.find(|val| val.0 .0 == "value") {
-						code
-					} else {
-						return Err(Diagnostic::new(Level::Error, "expected animation value")
-							.add_label(Label::primary("here", p.loc(range))));
-					};
-
-					Ok(Expression(
-						ExpressionType::Animation(Animation {
-							name: Box::new(name),
-							length: Box::new(length.1),
-							lag: Box::new(lag.1),
-							value: Box::new(code.1),
-						}),
-						p.loc(range),
-					))
-				}),
-				infix: None,
-			}),
-			TokenType::Visible => Some(&ParseRule {
-				prefix: Some(&|p, _| {
-					let range = next!(p).1;
-					expect!(p, TokenType::If, "expected `if`");
-					let expr = Box::new(p.parse_expression(ExpressionParseMode::Normal)?);
-					let range = merge_range!(range, expr.1.range.clone());
-					Ok(Expression(ExpressionType::Visible(expr), p.loc(range)))
 				}),
 				infix: None,
 			}),

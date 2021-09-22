@@ -268,10 +268,6 @@ lazy_static! {
 		m.insert("behavior", TokenType::Behavior);
 		m.insert("template", TokenType::Template);
 		m.insert("use", TokenType::Use);
-		m.insert("component", TokenType::Component);
-		m.insert("on", TokenType::On);
-		m.insert("animation", TokenType::Animation);
-		m.insert("visible", TokenType::Visible);
 		m.insert("extern", TokenType::Extern);
 		m
 	};

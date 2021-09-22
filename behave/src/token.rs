@@ -68,10 +68,6 @@ pub enum TokenType {
 	Behavior,
 	Template,
 	Use,
-	Component,
-	On,
-	Animation,
-	Visible,
 	Extern,
 }
 
@@ -147,10 +143,6 @@ impl Token {
 			Behavior => "behavior",
 			Template => "template",
 			Use => "use",
-			Component => "component",
-			On => "on",
-			Animation => "animation",
-			Visible => "visible",
 			Extern => "extern",
 		}
 	}
