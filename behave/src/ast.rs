@@ -140,6 +140,7 @@ pub enum TypeType<'a> {
 	Bool,
 	User(UserType<'a>),
 	Array(Box<Type<'a>>),
+	Map(Box<Type<'a>>, Box<Type<'a>>),
 	Function(FunctionType<'a>),
 	Code,
 }
@@ -177,6 +178,7 @@ pub enum ExpressionType<'a> {
 	Function(Function<'a>),
 	Code(Block<'a>),
 	Array(Vec<Expression<'a>>),
+	Map(Vec<(Expression<'a>, Expression<'a>)>),
 	Access(Access<'a>),
 	StructCreate(StructCreate<'a>),
 	RPNAccess(Box<Expression<'a>>),
@@ -512,6 +514,7 @@ pub trait ASTPass {
 			ExpressionType::Function(ref mut f) => self.function(f),
 			ExpressionType::Code(ref mut block) => self.block(block),
 			ExpressionType::Array(ref mut array) => self.array(array),
+			ExpressionType::Map(ref mut map) => self.map(map),
 			ExpressionType::Access(ref mut access) => self.access(access),
 			ExpressionType::StructCreate(ref mut s) => self.struct_create(s),
 			ExpressionType::RPNAccess(ref mut expr) => self.expression(&mut expr.0),
@@ -597,6 +600,13 @@ pub trait ASTPass {
 	fn array(&mut self, array: &mut Vec<Expression>) {
 		for expr in array {
 			self.expression(&mut expr.0);
+		}
+	}
+
+	fn map(&mut self, map: &mut Vec<(Expression, Expression)>) {
+		for expr in map {
+			self.expression(&mut expr.0 .0);
+			self.expression(&mut expr.1 .0);
 		}
 	}
 

@@ -199,6 +199,7 @@ impl<'a> ExpressionEvaluator<'a> {
 			Code(code) => Value::Code(self.compile_code(code)?),
 			Block(block) => self.evaluate_block(block)?,
 			Array(values) => self.evaluate_array(values)?,
+			Map(values) => self.evaluate_map(values)?,
 			Access(path) => self.evaluate_access(path)?,
 			Index(index) => self.evaluate_index(index)?,
 			Assignment(assignment) => self.evaluate_assignment(assignment)?,
@@ -620,35 +621,140 @@ impl<'a> ExpressionEvaluator<'a> {
 		}
 	}
 
+	fn evaluate_map(&mut self, values: &[(Expression<'a>, Expression<'a>)]) -> Flow<'a> {
+		let mut errors = Vec::new();
+		let (mut k_ty, mut k_ty_loc) = (RuntimeType::None, None);
+		let (mut v_ty, mut v_ty_loc) = (RuntimeType::None, None);
+		let map = values
+			.iter()
+			.map(|expr| {
+				(
+					expr.0 .1.clone(),
+					self.evaluate_expression(&expr.0),
+					expr.1 .1.clone(),
+					self.evaluate_expression(&expr.1),
+				)
+			})
+			.collect::<Vec<_>>()
+			.into_iter()
+			.filter_map(|val| match (val.1, val.3) {
+				(Flow::Ok(key), Flow::Ok(value)) => {
+					k_ty = key.get_type(self.item_map);
+					k_ty_loc = Some(val.0.clone());
+					v_ty = value.get_type(self.item_map);
+					v_ty_loc = Some(val.2.clone());
+					Some((val.0, key, val.2, value))
+				},
+				(Flow::Return(loc, _), _) | (_, Flow::Return(loc, _)) => {
+					errors.push(
+						Diagnostic::new(Level::Error, "unexpected return")
+							.add_label(Label::primary("return expression here `{}`", loc)),
+					);
+					None
+				},
+				(Flow::Break(loc, _), _) | (_, Flow::Break(loc, _)) => {
+					errors.push(
+						Diagnostic::new(Level::Error, "unexpected break")
+							.add_label(Label::primary("break expression here `{}`", loc)),
+					);
+					None
+				},
+				(Flow::Err(vec), _) | (_, Flow::Err(vec)) => {
+					errors.extend(vec);
+					None
+				},
+			})
+			.collect::<Vec<_>>();
+
+		for t in map.iter() {
+			let wkty = t.1.get_type(self.item_map);
+			if wkty != k_ty {
+				errors.push(
+					Diagnostic::new(Level::Error, "mismatched map key types")
+						.add_label(Label::primary(
+							format!("expression has type `{}`...", wkty),
+							t.0.clone(),
+						))
+						.add_label(Label::secondary(
+							format!("...but expected type `{}`", k_ty),
+							k_ty_loc.as_ref().unwrap().clone(),
+						)),
+				);
+			}
+
+			let wvty = t.3.get_type(self.item_map);
+			if wvty != v_ty {
+				errors.push(
+					Diagnostic::new(Level::Error, "mismatched map value types")
+						.add_label(Label::primary(
+							format!("expression has type `{}`...", wvty),
+							t.2.clone(),
+						))
+						.add_label(Label::secondary(
+							format!("...but expected type `{}`", v_ty),
+							v_ty_loc.as_ref().unwrap().clone(),
+						)),
+				);
+			}
+		}
+
+		if errors.len() == 0 {
+			Flow::Ok(Value::Map(k_ty, v_ty, map.into_iter().map(|i| (i.1, i.3)).collect()))
+		} else {
+			Flow::Err(errors)
+		}
+	}
+
 	fn evaluate_index(&mut self, index: &Index<'a>) -> Flow<'a> {
 		let array = self.evaluate_expression(&index.array)?;
-		if let Value::Array(_, array) = array {
-			let idx = self.evaluate_expression(&index.index)?;
-			if let Value::Number(idx) = idx {
-				let len = array.len();
-				if let Some(val) = array.into_iter().nth(idx as usize) {
-					Flow::Ok(val)
+		match array {
+			Value::Array(_, array) => {
+				let idx = self.evaluate_expression(&index.index)?;
+				if let Value::Number(idx) = idx {
+					let len = array.len();
+					if let Some(val) = array.into_iter().nth(idx as usize) {
+						Flow::Ok(val)
+					} else {
+						Flow::Err(vec![Diagnostic::new(Level::Error, "array index out of bounds")
+							.add_label(Label::primary(
+								format!("array length is {}, but index was {}", len, idx as usize),
+								index.index.1.clone(),
+							))])
+					}
 				} else {
-					Flow::Err(vec![Diagnostic::new(Level::Error, "array index out of bounds")
+					Flow::Err(vec![Diagnostic::new(Level::Error, "array index must be a number")
 						.add_label(Label::primary(
-							format!("array length is {}, but index was {}", len, idx as usize),
+							format!("expression result is of type `{}`", idx.get_type(self.item_map)),
 							index.index.1.clone(),
 						))])
 				}
-			} else {
-				Flow::Err(vec![Diagnostic::new(Level::Error, "array index must be a number")
-					.add_label(Label::primary(
-						format!("expression result is of type `{}`", idx.get_type(self.item_map)),
-						index.index.1.clone(),
-					))])
-			}
-		} else {
-			Flow::Err(vec![Diagnostic::new(Level::Error, "can only index arrays").add_label(
-				Label::primary(
+			},
+			Value::Map(key, _, map) => {
+				let idx = self.evaluate_expression(&index.index)?;
+				let idx_ty = idx.get_type(&self.item_map);
+				if idx_ty == key {
+					for pair in map {
+						if pair.0 == idx {
+							return Flow::Ok(pair.1);
+						}
+					}
+
+					Flow::Err(vec![Diagnostic::new(Level::Error, "key does not exist in map")
+						.add_label(Label::primary("key does not exist", index.index.1.clone()))])
+				} else {
+					Flow::Err(vec![Diagnostic::new(Level::Error, "incorrect map index type")
+						.add_label(Label::primary(
+							format!("expression result is of type `{}`", idx_ty),
+							index.index.1.clone(),
+						))
+						.add_note(format!("expected type `{}`", key))])
+				}
+			},
+			_ => Flow::Err(vec![Diagnostic::new(Level::Error, "can only index arrays or maps")
+				.add_label(Label::primary(
 					format!("expression result is of type `{}`", array.get_type(self.item_map)),
 					index.array.1.clone(),
-				),
-			)])
+				))]),
 		}
 	}
 

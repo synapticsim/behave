@@ -822,36 +822,66 @@ impl<'a, 'b> Parser<'a, 'b> {
 		self.parse_with_precedence(precedence::ASSIGNMENT, mode)
 	}
 
-	fn parse_array(&mut self, mode: ExpressionParseMode) -> Result<Expression<'a>, Diagnostic> {
+	fn parse_array_or_map(&mut self, mode: ExpressionParseMode) -> Result<Expression<'a>, Diagnostic> {
 		let mut range = self.next().unwrap().1;
-		let mut array = Vec::new();
-		if let Some(tok) = self.peek() {
-			if let TokenType::RightParen = tok.0 {
-				range = merge_range!(range, tok.1);
-			} else {
-				loop {
-					let expr = self.parse_expression(mode)?;
-					range = merge_range!(range, &expr.1.range);
-					array.push(expr);
-					peek!(self, TokenType::Comma, else break);
+
+		let key = self.parse_expression(mode)?;
+		let expr = peek!(self, TokenType::Colon, if {
+			let mut map = Vec::new();
+			let value = self.parse_expression(mode)?;
+			map.push((key, value));
+			if let Some(tok) = self.peek() {
+				if let TokenType::Comma = tok.0 {
+					self.next();
+					loop {
+						let key = self.parse_expression(mode)?;
+						expect!(self, TokenType::Colon, "expected `colon`");
+						let value = self.parse_expression(mode)?;
+						range = merge_range!(range, &value.1.range);
+						map.push((key, value));
+						peek!(self, TokenType::Comma, else break);
+					}
 				}
+
+				ExpressionType::Map(map)
+			} else {
+				return Err(Diagnostic::new(
+					Level::Error,
+					"unexpected end of file: expected expression",
+				));
 			}
 		} else {
-			return Err(Diagnostic::new(
-				Level::Error,
-				"unexpected end of file: expected expression or `]`",
-			));
-		}
+			let mut array = Vec::new();
+			if let Some(tok) = self.peek() {
+				if let TokenType::Comma = tok.0 {
+					self.next();
+					loop {
+						let expr = self.parse_expression(mode)?;
+						range = merge_range!(range, &expr.1.range);
+						array.push(expr);
+						peek!(self, TokenType::Comma, else break);
+					}
+				}
+
+				ExpressionType::Array(array)
+			} else {
+				return Err(Diagnostic::new(
+					Level::Error,
+					"unexpected end of file: expected expression",
+				));
+			}
+		});
 
 		let temp = expect!(self, TokenType::RightBracket, "expected `]`");
 		let loc = self.loc(merge_range!(range, temp));
 		if mode == ExpressionParseMode::Normal {
-			Ok(Expression(ExpressionType::Array(array), loc))
+			Ok(Expression(expr, loc))
 		} else {
-			Err(
-				Diagnostic::new(Level::Error, "an array expression is not allowed in this context")
-					.add_label(Label::primary("unexpected expression", loc.clone())),
+			Err(Diagnostic::new(
+				Level::Error,
+				"an array or map expression is not allowed in this context",
 			)
+			.add_label(Label::primary("unexpected expression", loc.clone())))
 		}
 	}
 
@@ -1340,7 +1370,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 				)),
 			}),
 			TokenType::LeftBracket => Some(&ParseRule {
-				prefix: Some(&|p, mode| p.parse_array(mode)),
+				prefix: Some(&|p, mode| p.parse_array_or_map(mode)),
 				infix: Some((
 					&|p, left, mode| {
 						let index = p.parse_expression(mode)?;
