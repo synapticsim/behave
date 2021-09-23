@@ -3,14 +3,14 @@ use std::collections::HashSet;
 use gltf::json::Root;
 use uuid::Uuid;
 
-use crate::ast::{Behavior, Block, LODs, Location};
+use crate::ast::{Behavior, LODs, Location};
 use crate::diagnostic::{Diagnostic, Label, Level};
+use crate::evaluation::runtime::ExpressionEvaluator;
+use crate::evaluation::value::{RuntimeAnimation, RuntimeComponent, TemplateValue};
 use crate::items::ItemMap;
 use crate::output::xml::XMLWriter;
-use crate::runtime::expression::ExpressionEvaluator;
-use crate::runtime::value::{RuntimeAnimation, RuntimeComponent, TemplateValue};
 
-mod xml;
+pub mod xml;
 
 macro_rules! get {
 	($expr:expr, $errors:ident) => {
@@ -40,7 +40,7 @@ where
 	let mut gltfs = Vec::new();
 
 	generate_lods(loader, lods, &mut gltfs, &mut writer, &mut evaluator, &mut errors);
-	generate_behavior(behavior, item_map, &gltfs, &mut writer, &mut evaluator, &mut errors);
+	generate_behavior(behavior, &gltfs, &mut writer, &mut evaluator, &mut errors);
 
 	if errors.len() == 0 {
 		Ok(writer.end())
@@ -108,8 +108,8 @@ fn generate_lods<'a, F>(
 }
 
 fn generate_behavior<'a>(
-	behavior: Behavior<'a>, item_map: &ItemMap<'a>, gltfs: &[GLTFData], writer: &mut XMLWriter,
-	evaluator: &mut ExpressionEvaluator<'a>, errors: &mut Vec<Diagnostic>,
+	behavior: Behavior<'a>, gltfs: &[GLTFData], writer: &mut XMLWriter, evaluator: &mut ExpressionEvaluator<'a>,
+	errors: &mut Vec<Diagnostic>,
 ) {
 	let values = match evaluator.evaluate_behavior(&behavior) {
 		Ok(v) => v,
@@ -131,8 +131,8 @@ fn generate_template_values<'a>(
 		match value {
 			TemplateValue::Component(component) => generate_component(component, gltfs, writer, errors),
 			TemplateValue::Animation(animation) => generate_animation(animation, gltfs, writer, errors),
-			TemplateValue::Visibility(condition) => generate_visibility(condition, writer, errors),
-			TemplateValue::Emissive(value) => generate_emissive(value, writer, errors),
+			TemplateValue::Visibility(condition) => generate_visibility(condition, writer),
+			TemplateValue::Emissive(value) => generate_emissive(value, writer),
 			TemplateValue::Block(values) => generate_template_values(values, gltfs, writer, errors),
 		}
 	}
@@ -224,28 +224,28 @@ fn generate_animation(
 	writer.data(animation.lag.to_string());
 	writer.end_element();
 	writer.start_element("Code");
-	// Compiled RPN goes here
+	writer.data(animation.value);
 	writer.end_element();
 	writer.end_element();
 	writer.end_element();
 }
 
-fn generate_visibility(condition: Block, writer: &mut XMLWriter, errors: &mut Vec<Diagnostic>) {
+fn generate_visibility(condition: String, writer: &mut XMLWriter) {
 	writer.start_element("Visibility");
 	writer.start_element("Parameter");
 	writer.start_element("Code");
-	// Compiled RPN goes here
+	writer.data(condition);
 	writer.end_element();
 	writer.end_element();
 	writer.end_element();
 }
 
-fn generate_emissive(value: Block, writer: &mut XMLWriter, errors: &mut Vec<Diagnostic>) {
+fn generate_emissive(value: String, writer: &mut XMLWriter) {
 	writer.start_element("Materials");
 	writer.start_element("Emissive");
 	writer.start_element("Parameter");
 	writer.start_element("Code");
-	// Compiled RPN goes here
+	writer.data(value);
 	writer.end_element();
 	writer.end_element();
 	writer.start_element("OverrideBaseEmissive");

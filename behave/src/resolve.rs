@@ -8,11 +8,14 @@ use crate::ast::{
 	ASTType,
 	Access,
 	EnumAccess,
+	EnumType,
 	FunctionAccess,
 	GlobalAccess,
 	ImportType,
+	InbuiltEnum,
 	InbuiltFunction,
 	ItemType,
+	MouseEvent,
 	Path,
 	ResolvedAccess,
 	ResolvedType,
@@ -24,10 +27,44 @@ use crate::ast::{
 use crate::diagnostic::{Diagnostic, Label, Level};
 use crate::items::{FunctionId, ItemMap, TemplateId};
 
+fn insert_event(h: &mut HashMap<Vec<String>, EnumAccess>, event: MouseEvent) {
+	h.insert(
+		vec!["MouseEvent".to_string(), event.to_string()],
+		EnumAccess {
+			id: EnumType::Inbuilt(InbuiltEnum::MouseEvent),
+			value: event as usize,
+		},
+	);
+}
+
 lazy_static! {
 	static ref INBUILT_FUNCTION_MAP: HashMap<Vec<String>, InbuiltFunction> = {
 		let mut h = HashMap::new();
 		h.insert(vec!["format".to_string()], InbuiltFunction::Format);
+		h
+	};
+	static ref INBUILT_ENUM_MAP: HashMap<Vec<String>, EnumAccess> = {
+		let mut h = HashMap::new();
+
+		insert_event(&mut h, MouseEvent::RightSingle);
+		insert_event(&mut h, MouseEvent::MiddleSingle);
+		insert_event(&mut h, MouseEvent::LeftSingle);
+		insert_event(&mut h, MouseEvent::RightDouble);
+		insert_event(&mut h, MouseEvent::MiddleDouble);
+		insert_event(&mut h, MouseEvent::LeftDouble);
+		insert_event(&mut h, MouseEvent::RightDrag);
+		insert_event(&mut h, MouseEvent::MiddleDrag);
+		insert_event(&mut h, MouseEvent::LeftDrag);
+		insert_event(&mut h, MouseEvent::RightRelease);
+		insert_event(&mut h, MouseEvent::MiddleRelease);
+		insert_event(&mut h, MouseEvent::LeftRelease);
+		insert_event(&mut h, MouseEvent::Lock);
+		insert_event(&mut h, MouseEvent::Unlock);
+		insert_event(&mut h, MouseEvent::Move);
+		insert_event(&mut h, MouseEvent::Leave);
+		insert_event(&mut h, MouseEvent::WheelUp);
+		insert_event(&mut h, MouseEvent::WheelDown);
+
 		h
 	};
 }
@@ -72,7 +109,9 @@ impl<'a> Resolver<'a> {
 					match item.0 {
 						ItemType::Enum(e) => {
 							let en = item_map.get_enum(e);
-							resolver.types.insert(vec![en.name.0.clone()], ResolvedType::Enum(e));
+							resolver
+								.types
+								.insert(vec![en.name.0.clone()], ResolvedType::Enum(EnumType::User(e)));
 
 							for variant in en.variants.iter() {
 								let mut path = vec![en.name.0.clone()];
@@ -80,7 +119,7 @@ impl<'a> Resolver<'a> {
 								resolver.enum_variants.insert(
 									path,
 									EnumAccess {
-										id: e,
+										id: EnumType::User(e),
 										value: variant.value,
 									},
 								);
@@ -124,7 +163,7 @@ impl<'a> Resolver<'a> {
 								let mut path = path.to_vec();
 								let en = item_map.get_enum(e);
 								path.push(en.name.0.clone());
-								self.types.insert(path.clone(), ResolvedType::Enum(e));
+								self.types.insert(path.clone(), ResolvedType::Enum(EnumType::User(e)));
 
 								for variant in en.variants.iter() {
 									let mut path = path.clone();
@@ -132,7 +171,7 @@ impl<'a> Resolver<'a> {
 									self.enum_variants.insert(
 										path,
 										EnumAccess {
-											id: e,
+											id: EnumType::User(e),
 											value: variant.value,
 										},
 									);
@@ -184,7 +223,10 @@ impl ASTPass for Resolver<'_> {
 
 	fn access(&mut self, access: &mut Access) {
 		access.resolved = Some(
-			if let Some(inbuilt) =
+			if let Some(inbuilt) = INBUILT_ENUM_MAP.get(&access.path.0.iter().map(|s| s.0.clone()).collect::<Vec<_>>())
+			{
+				ResolvedAccess::Global(GlobalAccess::Enum(*inbuilt))
+			} else if let Some(inbuilt) =
 				INBUILT_FUNCTION_MAP.get(&access.path.0.iter().map(|s| s.0.clone()).collect::<Vec<_>>())
 			{
 				ResolvedAccess::Global(GlobalAccess::Function(FunctionAccess::Inbuilt(*inbuilt)))

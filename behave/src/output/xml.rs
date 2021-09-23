@@ -83,8 +83,16 @@ impl XMLWriter {
 	}
 
 	pub fn data(&mut self, data: impl AsRef<str>) {
-		self.indent();
-		self.data.push_str(data.as_ref());
+		let mut iter = data.as_ref().lines();
+		if let Some(line) = iter.next() {
+			self.indent();
+			self.data.extend(EscapeIterator::new(line));
+			for line in iter {
+				self.data.push('\n');
+				self.indent();
+				self.data.extend(EscapeIterator::new(line));
+			}
+		}
 		self.data.push('\n');
 	}
 

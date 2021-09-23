@@ -13,17 +13,26 @@ fn elevator_id_to_string(id: ElevatorID) -> str {
 template Elevators(id: ElevatorID) {
     let name = format("Elevator_{}", elevator_id_to_string(id));
 
+    let event = MouseEvent.RightSingle;
+
     component name on name {
         animation name {
             length: 100,
             lag: 50,
             value: @{
-                @"A:ELEVATOR DEFLECTION PCT, percent over 100" * 0.5 + 0.5
+                let value = @"A:ELEVATOR DEFLECTION PCT, percent over 100";
+                value * 0.5 + 0.5
             }
         }
 
-        emissive @{
-            1.0
+        visibility @{
+            if @"L:ElevatorsInvisible, Bool" {
+                true
+            } else if false {
+                false
+            } else {
+                false
+            }
         }
     }
 }

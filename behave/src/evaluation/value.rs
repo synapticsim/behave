@@ -2,12 +2,13 @@ use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 
 use crate::ast::{
-	Block,
 	Enum,
 	EnumAccess,
+	EnumType,
 	Function,
 	FunctionType,
 	Ident,
+	InbuiltEnum,
 	InbuiltFunction,
 	Location,
 	ResolvedType,
@@ -23,12 +24,18 @@ pub enum RuntimeType<'a> {
 	Str,
 	Bool,
 	Struct(&'a Struct<'a>),
-	Enum(&'a Enum<'a>),
+	Enum(RuntimeEnumType<'a>),
 	Array(Box<RuntimeType<'a>>),
 	Function(RuntimeFunctionType<'a>),
 	None,
 	Code,
 	TemplateValue,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum RuntimeEnumType<'a> {
+	User(&'a Enum<'a>),
+	Inbuilt(InbuiltEnum),
 }
 
 impl<'a> RuntimeType<'a> {
@@ -39,7 +46,10 @@ impl<'a> RuntimeType<'a> {
 			TypeType::Bool => Self::Bool,
 			TypeType::User(ref u) => match u.resolved.unwrap() {
 				ResolvedType::Struct(id) => Self::Struct(item_map.get_struct(id)),
-				ResolvedType::Enum(id) => Self::Enum(item_map.get_enum(id)),
+				ResolvedType::Enum(id) => match id {
+					EnumType::User(id) => Self::Enum(RuntimeEnumType::User(item_map.get_enum(id))),
+					EnumType::Inbuilt(id) => Self::Enum(RuntimeEnumType::Inbuilt(id)),
+				},
 			},
 			TypeType::Array(ref ty) => Self::Array(Box::new(Self::from(item_map, &ty.0))),
 			TypeType::Function(ref f) => Self::Function(RuntimeFunctionType::from(item_map, f)),
@@ -70,7 +80,10 @@ impl Display for RuntimeType<'_> {
 			Self::Str => "str".to_string(),
 			Self::Bool => "bool".to_string(),
 			Self::Struct(s) => s.name.0.clone(),
-			Self::Enum(e) => e.name.0.clone(),
+			Self::Enum(e) => match e {
+				RuntimeEnumType::User(e) => e.name.0.clone(),
+				RuntimeEnumType::Inbuilt(e) => e.to_string(),
+			},
 			Self::Array(ty) => format!("[{}]", *ty),
 			Self::Function(f) => f.to_string(),
 			Self::None => "none".to_string(),
@@ -109,17 +122,23 @@ pub enum Value<'a> {
 	Object(Object<'a>),
 	Enum(EnumAccess),
 	Array(RuntimeType<'a>, Vec<Value<'a>>),
-	Code(Block<'a>),
+	Code(Code<'a>),
 	None,
 	Template(TemplateValue<'a>),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Code<'a> {
+	pub ty: RuntimeType<'a>,
+	pub value: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum TemplateValue<'a> {
 	Component(RuntimeComponent<'a>),
 	Animation(RuntimeAnimation<'a>),
-	Visibility(Block<'a>),
-	Emissive(Block<'a>),
+	Visibility(String),
+	Emissive(String),
 	Block(Vec<TemplateValue<'a>>),
 }
 
@@ -147,7 +166,7 @@ pub struct RuntimeAnimation<'a> {
 	pub name: (String, Location<'a>),
 	pub length: f64,
 	pub lag: f64,
-	pub value: Block<'a>,
+	pub value: String,
 }
 
 impl<'a> Value<'a> {
@@ -165,14 +184,17 @@ impl<'a> Value<'a> {
 						.collect(),
 					ret: f.ret.as_ref().map(|ret| Box::new(RuntimeType::from(item_map, &ret.0))),
 				}),
-				_ => unreachable!("ICE: tried to get type of inbuilt function"),
+				_ => unreachable!("tried to get type of inbuilt function"),
 			},
 			Self::Object(obj) => RuntimeType::Struct(item_map.get_struct(obj.id)),
-			Self::Enum(access) => RuntimeType::Enum(item_map.get_enum(access.id)),
+			Self::Enum(access) => match access.id {
+				EnumType::Inbuilt(e) => RuntimeType::Enum(RuntimeEnumType::Inbuilt(e)),
+				EnumType::User(e) => RuntimeType::Enum(RuntimeEnumType::User(item_map.get_enum(e))),
+			},
 			Self::Array(ty, _) => RuntimeType::Array(Box::new(ty.clone())),
 			Self::None => RuntimeType::None,
 			Self::Template(_) => RuntimeType::TemplateValue,
-			Self::Code(_) => RuntimeType::Code,
+			Self::Code(..) => RuntimeType::Code,
 		}
 	}
 }

@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 use std::ops::Range;
 
+use num_derive::FromPrimitive;
+use num_traits::FromPrimitive;
+
 use crate::diagnostic::{Diagnostic, Level};
 use crate::items::{EnumId, FunctionId, ItemMap, StructId, TemplateId};
 
@@ -150,7 +153,7 @@ pub struct UserType<'a> {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ResolvedType {
 	Struct(StructId),
-	Enum(EnumId),
+	Enum(EnumType),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -267,8 +270,79 @@ pub enum InbuiltFunction {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+pub enum EnumType {
+	User(EnumId),
+	Inbuilt(InbuiltEnum),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum InbuiltEnum {
+	MouseEvent,
+}
+
+impl InbuiltEnum {
+	pub fn to_string(self) -> String {
+		match self {
+			InbuiltEnum::MouseEvent => "MouseEvent",
+		}
+		.to_string()
+	}
+}
+
+#[derive(Clone, Copy, Debug, FromPrimitive, PartialEq)]
+pub enum MouseEvent {
+	RightSingle,
+	MiddleSingle,
+	LeftSingle,
+	RightDouble,
+	MiddleDouble,
+	LeftDouble,
+	RightDrag,
+	MiddleDrag,
+	LeftDrag,
+	RightRelease,
+	MiddleRelease,
+	LeftRelease,
+	Lock,
+	Unlock,
+	Move,
+	Leave,
+	WheelUp,
+	WheelDown,
+}
+
+impl MouseEvent {
+	pub fn to_string(self) -> String {
+		use MouseEvent::*;
+		match self {
+			RightSingle => "RightSingle",
+			MiddleSingle => "MiddleSingle",
+			LeftSingle => "LeftSingle",
+			RightDouble => "RightDouble",
+			MiddleDouble => "MiddleDouble",
+			LeftDouble => "LeftDouble",
+			RightDrag => "RightDrag",
+			MiddleDrag => "MiddleDrag",
+			LeftDrag => "LeftDrag",
+			RightRelease => "RightRelease",
+			MiddleRelease => "MiddleRelease",
+			LeftRelease => "LeftRelease",
+			Lock => "Lock",
+			Unlock => "Unlock",
+			Move => "Move",
+			Leave => "Leave",
+			WheelUp => "WheelUp",
+			WheelDown => "WheelDown",
+		}
+		.to_string()
+	}
+
+	pub fn from_num(val: usize) -> MouseEvent { FromPrimitive::from_usize(val).unwrap() }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct EnumAccess {
-	pub id: EnumId,
+	pub id: EnumType,
 	pub value: usize,
 }
 

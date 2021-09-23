@@ -12,6 +12,7 @@ pub struct TemplateId(usize);
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FunctionId(usize);
 
+#[derive(Debug)]
 pub struct ItemMap<'a> {
 	structs: Vec<Struct<'a>>,
 	enums: Vec<Enum<'a>>,

@@ -10,12 +10,12 @@ use crate::items::ItemMap;
 
 mod ast;
 pub mod diagnostic;
+mod evaluation;
 mod items;
 mod lexer;
 mod output;
 mod parser;
 mod resolve;
-mod runtime;
 mod token;
 
 /// The result of a compilation.

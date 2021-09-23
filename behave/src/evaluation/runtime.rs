@@ -13,6 +13,7 @@ use crate::ast::{
 	Block,
 	Call,
 	Component,
+	EnumAccess,
 	Expression,
 	ExpressionType,
 	For,
@@ -35,9 +36,10 @@ use crate::ast::{
 	While,
 };
 use crate::diagnostic::{Diagnostic, Label, Level};
-use crate::items::ItemMap;
-use crate::runtime::value::{
+use crate::evaluation::rpn::RPNCompiler;
+use crate::evaluation::value::{
 	CallStack,
+	Code,
 	FunctionValue,
 	Object,
 	RuntimeAnimation,
@@ -46,6 +48,7 @@ use crate::runtime::value::{
 	TemplateValue,
 	Value,
 };
+use crate::items::ItemMap;
 
 pub enum Flow<'a> {
 	Ok(Value<'a>),
@@ -92,7 +95,7 @@ struct ContextualInfo {
 
 pub struct ExpressionEvaluator<'a> {
 	stack: CallStack<'a>,
-	item_map: &'a ItemMap<'a>,
+	pub item_map: &'a ItemMap<'a>,
 	info: ContextualInfo,
 }
 
@@ -193,7 +196,7 @@ impl<'a> ExpressionEvaluator<'a> {
 			Number(num) => Value::Number(*num),
 			Boolean(val) => Value::Boolean(*val),
 			Function(func) => Value::Function(FunctionValue::User(func.clone())),
-			Code(code) => Value::Code(code.clone()),
+			Code(code) => Value::Code(self.compile_code(code)?),
 			Block(block) => self.evaluate_block(block)?,
 			Array(values) => self.evaluate_array(values)?,
 			Access(path) => self.evaluate_access(path)?,
@@ -315,7 +318,7 @@ impl<'a> ExpressionEvaluator<'a> {
 		}
 	}
 
-	fn evaluate_access(&mut self, access: &Access<'a>) -> Flow<'a> {
+	pub fn evaluate_access(&mut self, access: &Access<'a>) -> Flow<'a> {
 		match access.resolved.as_ref().unwrap() {
 			ResolvedAccess::Global(g) => match g {
 				GlobalAccess::Function(id) => Flow::Ok(Value::Function(match id {
@@ -424,7 +427,7 @@ impl<'a> ExpressionEvaluator<'a> {
 					}
 				},
 			},
-			_ => unreachable!("Cannot assign to RPN variable"),
+			_ => unreachable!("cannot assign to RPN variable"),
 		}
 	}
 
@@ -761,6 +764,10 @@ impl<'a> ExpressionEvaluator<'a> {
 				(Value::Number(lhs), Value::Number(rhs)) => Flow::Ok(Value::Boolean(lhs == rhs)),
 				(Value::Array(_, lhs), Value::Array(_, rhs)) => Flow::Ok(Value::Boolean(lhs == rhs)),
 				(Value::None, Value::None) => Flow::Ok(Value::Boolean(true)),
+				(
+					Value::Enum(EnumAccess { id: l_id, value: lhs }),
+					Value::Enum(EnumAccess { id: r_id, value: rhs }),
+				) if l_id == r_id => Flow::Ok(Value::Boolean(lhs == rhs)),
 				(lhs, rhs) => Flow::Err(vec![Diagnostic::new(Level::Error, "cannot equate")
 					.add_label(Label::primary(
 						format!("expression result is of type `{}`", lhs.get_type(self.item_map)),
@@ -777,6 +784,10 @@ impl<'a> ExpressionEvaluator<'a> {
 				(Value::Number(lhs), Value::Number(rhs)) => Flow::Ok(Value::Boolean(lhs != rhs)),
 				(Value::Array(_, lhs), Value::Array(_, rhs)) => Flow::Ok(Value::Boolean(lhs != rhs)),
 				(Value::None, Value::None) => Flow::Ok(Value::Boolean(false)),
+				(
+					Value::Enum(EnumAccess { id: l_id, value: lhs }),
+					Value::Enum(EnumAccess { id: r_id, value: rhs }),
+				) if l_id == r_id => Flow::Ok(Value::Boolean(lhs != rhs)),
 				(lhs, rhs) => Flow::Err(vec![Diagnostic::new(Level::Error, "cannot compare")
 					.add_label(Label::primary(
 						format!("expression result is of type `{}`", lhs.get_type(self.item_map)),
@@ -1129,7 +1140,27 @@ impl<'a> ExpressionEvaluator<'a> {
 			),
 			lag: evaluate!(self, on animation.lag.as_ref(), type Number "animation lag must be of type `num`", errors),
 			length: evaluate!(self, on animation.length.as_ref(), type Number "animation length must be of type `num`", errors),
-			value: evaluate!(self, on animation.value.as_ref(), type Code "animation value must be of type `code`", errors),
+			value: {
+				let code =
+					evaluate!(self, on animation.value.as_ref(), type Code "animation value must be of type `code`")?;
+				if code.ty == RuntimeType::Num {
+					code.value
+				} else {
+					return Flow::Err(vec![{
+						let d = Diagnostic::new(Level::Error, "animation value must result in a `num`").add_label(
+							Label::primary(
+								format!("this code results in type `{}`", code.ty),
+								animation.value.1.clone(),
+							),
+						);
+						if code.ty == RuntimeType::Bool {
+							d.add_note("you can convert a `bool` to a `num` by multiplying it with a number")
+						} else {
+							d
+						}
+					}]);
+				}
+			},
 		};
 
 		if errors.len() == 0 {
@@ -1147,9 +1178,21 @@ impl<'a> ExpressionEvaluator<'a> {
 					visible.1.clone(),
 				))])
 		} else {
-			Flow::Ok(Value::Template(TemplateValue::Visibility(
-				evaluate!(self, on visible, type Code "visibility condition must be of type `code`")?,
-			)))
+			Flow::Ok(Value::Template(TemplateValue::Visibility({
+				let code = evaluate!(self, on visible, type Code "visibility condition must be of type `code`")?;
+				if code.ty == RuntimeType::Bool {
+					code.value
+				} else {
+					return Flow::Err(vec![Diagnostic::new(
+						Level::Error,
+						"visibility condition must result in a `bool`",
+					)
+					.add_label(Label::primary(
+						format!("this code results in type `{}`", code.ty),
+						visible.1.clone(),
+					))]);
+				}
+			})))
 		}
 	}
 
@@ -1161,9 +1204,23 @@ impl<'a> ExpressionEvaluator<'a> {
 					emissive.1.clone(),
 				))])
 		} else {
-			Flow::Ok(Value::Template(TemplateValue::Emissive(
-				evaluate!(self, on emissive, type Code "emissive value must be of type `code`")?,
-			)))
+			Flow::Ok(Value::Template(TemplateValue::Emissive({
+				let code = evaluate!(self, on emissive, type Code "emissive value must be of type `code`")?;
+				if code.ty == RuntimeType::Num {
+					code.value
+				} else {
+					return Flow::Err(vec![{
+						let d = Diagnostic::new(Level::Error, "emissive value must result in a `num`").add_label(
+							Label::primary(format!("this code results in type `{}`", code.ty), emissive.1.clone()),
+						);
+						if code.ty == RuntimeType::Bool {
+							d.add_note("you can convert a `bool` to a `num` by multiplying it with a number")
+						} else {
+							d
+						}
+					}]);
+				}
+			})))
 		}
 	}
 
@@ -1317,5 +1374,9 @@ impl<'a> ExpressionEvaluator<'a> {
 			Flow::Err(vec![Diagnostic::new(Level::Error, "missing format string")
 				.add_label(Label::primary("in this invocation of `format`", loc))])
 		}
+	}
+
+	fn compile_code(&mut self, block: &Block<'a>) -> Result<Code<'a>, Vec<Diagnostic>> {
+		RPNCompiler::new(self).compile_block(block)
 	}
 }

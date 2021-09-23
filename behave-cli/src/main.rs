@@ -1,4 +1,5 @@
 use std::fs::read_dir;
+use std::panic::set_hook;
 use std::path::Path;
 use std::{
 	fs::{read_to_string, write},
@@ -13,7 +14,6 @@ use diagnostic::display_diagnostics;
 mod diagnostic;
 
 /// A compiler for Microsoft Flight Simulator ModelBehaviors and ModelInfo.
-/// It also compiles to RPN.
 #[derive(Clap)]
 #[clap(version = crate_version!(), author = "Synaptic Simulations")]
 #[clap(setting = AppSettings::ColoredHelp)]
@@ -31,6 +31,11 @@ struct CompileResult {
 }
 
 fn main() {
+	set_hook(Box::new(|info| {
+		println!("Internal Compiler Error: This is a bug, please report it to https://github.com/Synaptic-Simulations/behave/issues");
+		println!("{}", info);
+	}));
+
 	let options = Options::parse();
 	let result = compile(&options);
 	display_diagnostics(result.files, result.diagnostics);

@@ -842,10 +842,17 @@ impl<'a, 'b> Parser<'a, 'b> {
 				"unexpected end of file: expected expression or `]`",
 			));
 		}
-		Ok(Expression(ExpressionType::Array(array), {
-			let temp = expect!(self, TokenType::RightBracket, "expected `]`");
-			self.loc(merge_range!(range, temp))
-		}))
+
+		let temp = expect!(self, TokenType::RightBracket, "expected `]`");
+		let loc = self.loc(merge_range!(range, temp));
+		if mode == ExpressionParseMode::Normal {
+			Ok(Expression(ExpressionType::Array(array), loc))
+		} else {
+			Err(
+				Diagnostic::new(Level::Error, "an array expression is not allowed in this context")
+					.add_label(Label::primary("unexpected expression", loc.clone())),
+			)
+		}
 	}
 
 	fn parse_unary(&mut self, op: UnaryOperator, mode: ExpressionParseMode) -> Result<Expression<'a>, Diagnostic> {
@@ -900,7 +907,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 				}
 			},
 			ExpressionParseMode::RPNCode => {
-				let variable = match self.parse_expression(mode) {
+				let variable = match self.parse_with_precedence(precedence::CALL, mode) {
 					Ok(expr) => expr,
 					Err(diag) => return Err(diag.add_note("expected MSFS RPN variable")),
 				};
@@ -1222,11 +1229,11 @@ impl<'a, 'b> Parser<'a, 'b> {
 			TokenType::None => Some(&ParseRule {
 				prefix: Some(&|p, mode| {
 					let tok = next!(p);
-					if mode != ExpressionParseMode::Template {
+					if mode == ExpressionParseMode::Normal {
 						Ok(Expression(ExpressionType::None, p.loc(tok.1)))
 					} else {
 						Err(
-							Diagnostic::new(Level::Error, "a none expression is not allowed in behavior expressions")
+							Diagnostic::new(Level::Error, "a none expression is not allowed in this context")
 								.add_label(Label::primary("unexpected expression", p.loc(tok.1))),
 						)
 					}
@@ -1337,7 +1344,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 				infix: Some((
 					&|p, left, mode| {
 						let index = p.parse_expression(mode)?;
-						if mode != ExpressionParseMode::Template {
+						if mode == ExpressionParseMode::Normal {
 							Ok(Expression(
 								ExpressionType::Index(Index {
 									array: Box::new(left),
@@ -1349,11 +1356,10 @@ impl<'a, 'b> Parser<'a, 'b> {
 								},
 							))
 						} else {
-							Err(Diagnostic::new(
-								Level::Error,
-								"an array expression is not allowed in behavior expressions",
+							Err(
+								Diagnostic::new(Level::Error, "an index expression is not allowed in this context")
+									.add_label(Label::primary("unexpected expression", index.1)),
 							)
-							.add_label(Label::primary("unexpected expression", index.1)))
 						}
 					},
 					precedence::CALL,
@@ -1481,7 +1487,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 							p.loc(range),
 						))
 					},
-					precedence::CALL,
+					precedence::ASSIGNMENT,
 				)),
 			}),
 			TokenType::LeftBrace => Some(&ParseRule {
@@ -1566,10 +1572,15 @@ impl<'a, 'b> Parser<'a, 'b> {
 				prefix: Some(&|p, mode| {
 					let range = next!(p).1;
 					let func = p.parse_function(mode)?;
-					Ok(Expression(
-						ExpressionType::Function(func.0),
-						p.loc(merge_range!(range, func.1.range)),
-					))
+					let loc = p.loc(merge_range!(range, func.1.range));
+					if mode == ExpressionParseMode::Normal {
+						Ok(Expression(ExpressionType::Function(func.0), loc))
+					} else {
+						Err(
+							Diagnostic::new(Level::Error, "a function expression is not allowed in this context")
+								.add_label(Label::primary("unexpected expression", loc)),
+						)
+					}
 				}),
 				infix: None,
 			}),
