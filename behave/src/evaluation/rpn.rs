@@ -141,6 +141,14 @@ impl<'a, 'b> RPNCompiler<'a, 'b> {
 							},
 							Err(err) => errors.extend(err),
 						}
+					} else {
+						match self.stack.new_var(&decl.name, RuntimeType::None) {
+							Ok(value) => value,
+							Err(err) => {
+								errors.push(err);
+								continue;
+							},
+						};
 					}
 				},
 				StatementType::Expression(expr) => match self.compile_expr(&Expression(expr.clone(), stmt.1.clone())) {
@@ -330,22 +338,10 @@ impl<'a, 'b> RPNCompiler<'a, 'b> {
 				ResolvedAccess::Local => {
 					if access.path.0.len() == 1 {
 						if let Some(val) = self.stack.var(&access.path.0[0]) {
-							if val.ty == value.ty {
-								Ok(Code {
-									value: format!("{} s{}", value.value, val.register),
-									ty: value.ty,
-								})
-							} else {
-								Err(vec![Diagnostic::new(Level::Error, "assignment type mismatch")
-									.add_label(Label::primary(
-										format!("expression has type `{}`...", value.ty),
-										assign.value.1.clone(),
-									))
-									.add_label(Label::secondary(
-										format!("...but variable has type `{}`", val.ty),
-										access.path.1.clone(),
-									))])
-							}
+							Ok(Code {
+								value: format!("{} s{}", value.value, val.register),
+								ty: value.ty,
+							})
 						} else {
 							Err(vec![Diagnostic::new(Level::Error, "variable does not exist")
 								.add_label(Label::primary(

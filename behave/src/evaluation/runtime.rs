@@ -351,22 +351,8 @@ impl<'a> ExpressionEvaluator<'a> {
 				},
 				ResolvedAccess::Local => {
 					let val = Self::value(&mut self.stack, &self.item_map, &access.path)?;
-					let var_ty = val.get_type(&self.item_map);
-					let val_ty = value.get_type(&self.item_map);
-					if var_ty == val_ty {
-						*val = value.clone();
-						Flow::Ok(value)
-					} else {
-						Flow::Err(vec![Diagnostic::new(Level::Error, "assignment type mismatch")
-							.add_label(Label::primary(
-								format!("this expression has a result of type `{}`...", val_ty),
-								assignment.value.1.clone(),
-							))
-							.add_label(Label::secondary(
-								format!("...but variable is of type `{}`", var_ty),
-								access.path.1.clone(),
-							))])
-					}
+					*val = value.clone();
+					Flow::Ok(value)
 				},
 			},
 			AssignmentTarget::Index(access, index) => match access.resolved.as_ref().unwrap() {
@@ -391,7 +377,7 @@ impl<'a> ExpressionEvaluator<'a> {
 									*val = value.clone();
 									Flow::Ok(value)
 								} else {
-									Flow::Err(vec![Diagnostic::new(Level::Error, "assignment type mismatch")
+									Flow::Err(vec![Diagnostic::new(Level::Error, "array assignment type mismatch")
 										.add_label(Label::primary(
 											format!(
 												"this expression has a result of type `{}`...",
@@ -794,6 +780,20 @@ impl<'a> ExpressionEvaluator<'a> {
 			BinaryOperator::Add => match (lhs, rhs) {
 				(Value::String(lhs), Value::String(rhs)) => Flow::Ok(Value::String(lhs + &rhs)),
 				(Value::Number(lhs), Value::Number(rhs)) => Flow::Ok(Value::Number(lhs + rhs)),
+				(Value::Array(l_ty, mut lhs), Value::Array(r_ty, rhs)) if l_ty == r_ty => {
+					Flow::Ok(Value::Array(l_ty, {
+						lhs.extend(rhs);
+						lhs
+					}))
+				},
+				(Value::Map(lk_ty, lv_ty, mut lhs), Value::Map(rk_ty, rv_ty, rhs))
+					if lk_ty == rk_ty && lv_ty == rv_ty =>
+				{
+					Flow::Ok(Value::Map(lk_ty, rk_ty, {
+						lhs.extend(rhs);
+						lhs
+					}))
+				},
 				(lhs, rhs) => Flow::Err(vec![Diagnostic::new(Level::Error, "cannot add")
 					.add_label(Label::primary(
 						format!("expression result is of type `{}`", lhs.get_type(self.item_map)),

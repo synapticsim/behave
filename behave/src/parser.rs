@@ -707,10 +707,19 @@ impl<'a, 'b> Parser<'a, 'b> {
 					self.loc(range),
 				)
 			},
-			TokenType::LeftBracket => Type(TypeType::Array(Box::new(self.parse_type()?)), {
-				let temp = expect!(self, TokenType::RightBracket, "expected `]`");
-				self.loc(merge_range!(tok.1, temp))
-			}),
+			TokenType::LeftBracket => {
+				let key = self.parse_type()?;
+				let ty = peek!(self, TokenType::Colon, if {
+					let value = self.parse_type()?;
+					TypeType::Map(Box::new(key), Box::new(value))
+				} else {
+					TypeType::Array(Box::new(key))
+				});
+				Type(ty, {
+					let temp = expect!(self, TokenType::RightBracket, "expected `]`");
+					self.loc(merge_range!(tok.1, temp))
+				})
+			},
 			TokenType::Function => {
 				expect!(self, TokenType::LeftParen, "expected `(`");
 				let mut args = Vec::new();
