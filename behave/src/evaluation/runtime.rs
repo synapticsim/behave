@@ -433,7 +433,7 @@ impl<'a> ExpressionEvaluator<'a> {
 	}
 
 	fn evaluate_struct(&mut self, s: &StructCreate<'a>) -> Flow<'a> {
-		if let TypeType::User(user) = &s.ty.0 {
+		if let TypeType::Other(user) = &s.ty.0 {
 			if let ResolvedType::Struct(id) = user.resolved.unwrap() {
 				let mut errors = Vec::new();
 
@@ -1184,8 +1184,9 @@ impl<'a> ExpressionEvaluator<'a> {
 					}
 				} else {
 					errors.push(
-						Diagnostic::new(Level::Error, "argument missing")
-							.add_label(Label::primary("this argument is missing", field.name.1.clone())),
+						Diagnostic::new(Level::Error, "missing argument")
+							.add_label(Label::primary("in this template usage...", us.template.path.1.clone()))
+							.add_label(Label::secondary("...this argument is missing", field.name.1.clone())),
 					);
 					continue;
 				}

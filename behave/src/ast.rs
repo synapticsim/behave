@@ -138,7 +138,7 @@ pub enum TypeType<'a> {
 	Num,
 	Str,
 	Bool,
-	User(UserType<'a>),
+	Other(OtherType<'a>),
 	Array(Box<Type<'a>>),
 	Map(Box<Type<'a>>, Box<Type<'a>>),
 	Function(FunctionType<'a>),
@@ -146,7 +146,7 @@ pub enum TypeType<'a> {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct UserType<'a> {
+pub struct OtherType<'a> {
 	pub path: Path<'a>,
 	pub resolved: Option<ResolvedType>,
 }
@@ -314,7 +314,7 @@ pub enum MouseEvent {
 }
 
 impl MouseEvent {
-	pub fn to_string(self) -> String {
+	pub fn to_string(self) -> &'static str {
 		use MouseEvent::*;
 		match self {
 			RightSingle => "RightSingle",
@@ -336,7 +336,6 @@ impl MouseEvent {
 			WheelUp => "WheelUp",
 			WheelDown => "WheelDown",
 		}
-		.to_string()
 	}
 
 	pub fn from_num(val: usize) -> MouseEvent { FromPrimitive::from_usize(val).unwrap() }

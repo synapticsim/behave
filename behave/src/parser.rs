@@ -8,9 +8,9 @@ use crate::ast::{
 	BehaviorExpression,
 	Component,
 	Location,
+	OtherType,
 	StructCreate,
 	UseTarget,
-	UserType,
 };
 use crate::items::ItemMap;
 use crate::{
@@ -700,7 +700,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 				}
 
 				Type(
-					TypeType::User(UserType {
+					TypeType::Other(OtherType {
 						path: Path(path, self.loc(range.clone())),
 						resolved: None,
 					}),
@@ -1259,7 +1259,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 						let r = path.1.clone();
 						if let Some(tok) = p.peek() {
 							if p.struct_literal_allowed && matches!(tok.0, TokenType::LeftBrace) {
-								let ty = Type(TypeType::User(UserType { path, resolved: None }), r.clone());
+								let ty = Type(TypeType::Other(OtherType { path, resolved: None }), r.clone());
 								if mode != ExpressionParseMode::Template {
 									let values = p.parse_values(mode)?;
 									Ok(Expression(

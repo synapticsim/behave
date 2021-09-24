@@ -13,8 +13,6 @@ fn elevator_id_to_string(id: ElevatorID) -> str {
 template Elevators(id: ElevatorID) {
     let name = format("Elevator_{}", elevator_id_to_string(id));
 
-    let event = MouseEvent.RightSingle;
-
     component name on name {
         animation name {
             length: 100,

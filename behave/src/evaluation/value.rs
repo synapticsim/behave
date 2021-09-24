@@ -45,7 +45,7 @@ impl<'a> RuntimeType<'a> {
 			TypeType::Num => Self::Num,
 			TypeType::Str => Self::Str,
 			TypeType::Bool => Self::Bool,
-			TypeType::User(ref u) => match u.resolved.unwrap() {
+			TypeType::Other(ref u) => match u.resolved.unwrap() {
 				ResolvedType::Struct(id) => Self::Struct(item_map.get_struct(id)),
 				ResolvedType::Enum(id) => match id {
 					EnumType::User(id) => Self::Enum(RuntimeEnumType::User(item_map.get_enum(id))),
