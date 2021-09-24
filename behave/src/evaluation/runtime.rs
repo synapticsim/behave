@@ -19,8 +19,10 @@ use crate::ast::{
 	For,
 	FunctionAccess,
 	GlobalAccess,
+	Ident,
 	IfChain,
 	InbuiltFunction,
+	InbuiltStruct,
 	Index,
 	Location,
 	Path,
@@ -29,6 +31,7 @@ use crate::ast::{
 	Statement,
 	StatementType,
 	StructCreate,
+	StructType,
 	Switch,
 	Type,
 	TypeType,
@@ -45,6 +48,7 @@ use crate::evaluation::value::{
 	Object,
 	RuntimeAnimation,
 	RuntimeComponent,
+	RuntimeStructType,
 	RuntimeType,
 	TemplateValue,
 	Value,
@@ -300,7 +304,7 @@ impl<'a> ExpressionEvaluator<'a> {
 								return Err(Diagnostic::new(Level::Error, "missing field").add_label(Label::primary(
 									format!(
 										"type `{}` does not have a field `{}`",
-										RuntimeType::Struct(object.id, item_map.get_struct(object.id)),
+										RuntimeType::Struct(object.id.clone()),
 										ident.0
 									),
 									ident.1.clone(),
@@ -467,106 +471,114 @@ impl<'a> ExpressionEvaluator<'a> {
 
 	fn evaluate_struct(&mut self, s: &StructCreate<'a>) -> Flow<'a> {
 		if let TypeType::Other(user) = &s.ty.0 {
-			if let ResolvedType::Struct(id) = user.resolved.unwrap() {
+			if let ResolvedType::Struct(sty) = user.resolved.unwrap() {
 				let mut errors = Vec::new();
 
-				let ty = self.item_map.get_struct(id);
-				let mut object = Object {
-					id,
-					fields: HashMap::new(),
-				};
-
-				for field in s.values.iter() {
-					if let Some(f) = ty.fields.iter().find(|entry| entry.name.0 == field.0 .0) {
-						let value = match self.evaluate_expression(&field.1) {
-							Flow::Ok(val) => val,
-							Flow::Return(loc, _) => {
-								errors.push(
-									Diagnostic::new(Level::Error, "unexpected return")
-										.add_label(Label::primary("return expression here `{}`", loc)),
-								);
-								continue;
+				match sty {
+					StructType::User(id) => {
+						let ty = self.item_map.get_struct(id);
+						let mut object = Object {
+							id: match sty {
+								StructType::User(id) => RuntimeStructType::User(id, self.item_map.get_struct(id)),
+								StructType::Inbuilt(i) => RuntimeStructType::Inbuilt(i),
 							},
-							Flow::Break(loc, _) => {
-								errors.push(
-									Diagnostic::new(Level::Error, "unexpected break")
-										.add_label(Label::primary("break expression here `{}`", loc)),
-								);
-								continue;
-							},
-							Flow::Err(err) => {
-								errors.extend(err);
-								continue;
-							},
+							fields: HashMap::new(),
 						};
-						let ty = value.get_type(self.item_map);
-						let should = RuntimeType::from(&self.item_map, &f.ty.0);
-						if ty == should {
-							object.fields.insert(field.0 .0.clone(), value);
-						} else {
-							errors.push(
-								Diagnostic::new(Level::Error, "field type mismatch")
-									.add_label(Label::primary(
-										format!("this expression has a result of type `{}`...", ty),
-										field.1 .1.clone(),
-									))
-									.add_label(Label::secondary(
-										format!("...but field has a type `{}`", should),
-										f.ty.1.clone(),
-									)),
-							);
-							continue;
-						}
-					} else {
-						errors.push(
-							Diagnostic::new(Level::Error, "field does not exist").add_label(Label::primary(
-								format!(
-									"this field does not exist on type `{}`",
-									RuntimeType::from(&self.item_map, &s.ty.0)
-								),
-								field.0 .1.clone(),
-							)),
-						);
-						continue;
-					}
-				}
 
-				for field in ty.fields.iter() {
-					if !object.fields.contains_key(&field.name.0) {
-						if let Some(default) = &field.default {
-							let value = self.evaluate_expression(default.as_ref())?;
-							let ty = value.get_type(self.item_map);
-							let should = RuntimeType::from(&self.item_map, &field.ty.0);
-							if ty == should {
-								object.fields.insert(field.name.0.clone(), value);
+						for field in s.values.iter() {
+							if let Some(f) = ty.fields.iter().find(|entry| entry.name.0 == field.0 .0) {
+								let value = match self.evaluate_expression(&field.1) {
+									Flow::Ok(val) => val,
+									Flow::Return(loc, _) => {
+										errors.push(
+											Diagnostic::new(Level::Error, "unexpected return")
+												.add_label(Label::primary("return expression here `{}`", loc)),
+										);
+										continue;
+									},
+									Flow::Break(loc, _) => {
+										errors.push(
+											Diagnostic::new(Level::Error, "unexpected break")
+												.add_label(Label::primary("break expression here `{}`", loc)),
+										);
+										continue;
+									},
+									Flow::Err(err) => {
+										errors.extend(err);
+										continue;
+									},
+								};
+								let ty = value.get_type(self.item_map);
+								let should = RuntimeType::from(&self.item_map, &f.ty.0);
+								if ty == should {
+									object.fields.insert(field.0 .0.clone(), value);
+								} else {
+									errors.push(
+										Diagnostic::new(Level::Error, "field type mismatch")
+											.add_label(Label::primary(
+												format!("this expression has a result of type `{}`...", ty),
+												field.1 .1.clone(),
+											))
+											.add_label(Label::secondary(
+												format!("...but field has a type `{}`", should),
+												f.ty.1.clone(),
+											)),
+									);
+									continue;
+								}
 							} else {
-								errors.push(
-									Diagnostic::new(Level::Error, "field type mismatch")
-										.add_label(Label::primary(
-											format!("this default expression has a result of type `{}`...", ty),
-											default.1.clone(),
-										))
-										.add_label(Label::secondary(
-											format!("...but field has a type `{}`", should),
-											field.ty.1.clone(),
-										)),
-								);
+								errors.push(Diagnostic::new(Level::Error, "field does not exist").add_label(
+									Label::primary(
+										format!(
+											"this field does not exist on type `{}`",
+											RuntimeType::from(&self.item_map, &s.ty.0)
+										),
+										field.0 .1.clone(),
+									),
+								));
 								continue;
 							}
-						} else {
-							errors.push(
-								Diagnostic::new(Level::Error, "field value missing")
-									.add_label(Label::primary("this field is missing", field.name.1.clone())),
-							);
-							continue;
 						}
-					}
-				}
 
-				if errors.len() == 0 {
-					Flow::Ok(Value::Object(object))
-				} else {
-					Flow::Err(errors)
+						for field in ty.fields.iter() {
+							if !object.fields.contains_key(&field.name.0) {
+								if let Some(default) = &field.default {
+									let value = self.evaluate_expression(default.as_ref())?;
+									let ty = value.get_type(self.item_map);
+									let should = RuntimeType::from(&self.item_map, &field.ty.0);
+									if ty == should {
+										object.fields.insert(field.name.0.clone(), value);
+									} else {
+										errors.push(
+											Diagnostic::new(Level::Error, "field type mismatch")
+												.add_label(Label::primary(
+													format!("this default expression has a result of type `{}`...", ty),
+													default.1.clone(),
+												))
+												.add_label(Label::secondary(
+													format!("...but field has a type `{}`", should),
+													field.ty.1.clone(),
+												)),
+										);
+										continue;
+									}
+								} else {
+									errors.push(
+										Diagnostic::new(Level::Error, "field value missing")
+											.add_label(Label::primary("this field is missing", field.name.1.clone())),
+									);
+									continue;
+								}
+							}
+						}
+
+						if errors.len() == 0 {
+							Flow::Ok(Value::Object(object))
+						} else {
+							Flow::Err(errors)
+						}
+					},
+					StructType::Inbuilt(inbuilt) => self.evaluate_inbuilt_struct(inbuilt, &s.values),
 				}
 			} else {
 				Flow::Err(vec![Diagnostic::new(
@@ -578,6 +590,10 @@ impl<'a> ExpressionEvaluator<'a> {
 		} else {
 			unreachable!()
 		}
+	}
+
+	fn evaluate_inbuilt_struct(&mut self, inbuilt: InbuiltStruct, values: &[(Ident<'a>, Expression<'a>)]) -> Flow<'a> {
+		match inbuilt {}
 	}
 
 	fn evaluate_return(&mut self, expr: Option<&Expression<'a>>, loc: Location<'a>) -> Flow<'a> {

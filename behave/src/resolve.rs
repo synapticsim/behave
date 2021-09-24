@@ -19,6 +19,7 @@ use crate::ast::{
 	Path,
 	ResolvedAccess,
 	ResolvedType,
+	StructType,
 	Type,
 	TypeType,
 	Use,
@@ -74,6 +75,10 @@ lazy_static! {
 
 		h
 	};
+	static ref INBUILT_STRUCT_MAP: HashMap<Vec<&'static str>, StructType> = {
+		let mut h = HashMap::new();
+		h
+	};
 }
 
 #[derive(Debug)]
@@ -127,6 +132,13 @@ impl<'a> Resolver<'a> {
 				ResolvedType::Enum(*e.1),
 			);
 		}
+
+		for s in INBUILT_STRUCT_MAP.iter() {
+			self.types.insert(
+				s.0.into_iter().map(|f| f.to_string()).collect(),
+				ResolvedType::Struct(*s.1),
+			);
+		}
 	}
 
 	fn add_items(&mut self, ast: &AST, item_map: &ItemMap, path: &[String]) {
@@ -165,7 +177,18 @@ impl<'a> Resolver<'a> {
 						let mut path = path.to_vec();
 						let st = item_map.get_struct(s);
 						path.push(st.name.0.clone());
-						self.types.insert(path, ResolvedType::Struct(s));
+
+						if let Some(_) = self.types.get(&path) {
+							self.diagnostics
+								.push(
+									Diagnostic::new(Level::Error, "type redeclaration").add_label(Label::primary(
+										"a type with the same name is already in scope",
+										st.name.1.clone(),
+									)),
+								)
+						} else {
+							self.types.insert(path, ResolvedType::Struct(StructType::User(s)));
+						}
 					},
 					ItemType::Template(t) => {
 						let mut path = path.to_vec();
@@ -190,7 +213,18 @@ impl<'a> Resolver<'a> {
 					ItemType::Function(ref name, f) => {
 						let mut path = path.to_vec();
 						path.push(name.0.clone());
-						self.functions.insert(path, f);
+
+						if let Some(f) = self.functions.get(&path) {
+							self.diagnostics
+								.push(
+									Diagnostic::new(Level::Error, "function redefinition").add_label(Label::primary(
+										"a function with the same name is already in scope",
+										name.1.clone(),
+									)),
+								)
+						} else {
+							self.functions.insert(path, f);
+						}
 					},
 				}
 			}

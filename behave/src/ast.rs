@@ -154,7 +154,7 @@ pub struct OtherType<'a> {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ResolvedType {
-	Struct(StructId),
+	Struct(StructType),
 	Enum(EnumType),
 }
 
@@ -280,9 +280,18 @@ pub enum EnumType {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+pub enum StructType {
+	User(StructId),
+	Inbuilt(InbuiltStruct),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum InbuiltEnum {
 	MouseEvent,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum InbuiltStruct {}
 
 impl InbuiltEnum {
 	pub fn to_string(self) -> String {
@@ -291,6 +300,10 @@ impl InbuiltEnum {
 		}
 		.to_string()
 	}
+}
+
+impl InbuiltStruct {
+	pub fn to_string(self) -> String { match self {}.to_string() }
 }
 
 #[derive(Clone, Copy, Debug, FromPrimitive, PartialEq)]

@@ -10,9 +10,11 @@ use crate::ast::{
 	Ident,
 	InbuiltEnum,
 	InbuiltFunction,
+	InbuiltStruct,
 	Location,
 	ResolvedType,
 	Struct,
+	StructType,
 	TypeType,
 };
 use crate::diagnostic::{Diagnostic, Label, Level};
@@ -23,7 +25,7 @@ pub enum RuntimeType<'a> {
 	Num,
 	Str,
 	Bool,
-	Struct(StructId, &'a Struct<'a>),
+	Struct(RuntimeStructType<'a>),
 	Enum(RuntimeEnumType<'a>),
 	Array(Box<RuntimeType<'a>>),
 	Map(Box<RuntimeType<'a>>, Box<RuntimeType<'a>>),
@@ -40,11 +42,27 @@ pub enum RuntimeEnumType<'a> {
 	Inbuilt(InbuiltEnum),
 }
 
+#[derive(Clone, Debug)]
+pub enum RuntimeStructType<'a> {
+	User(StructId, &'a Struct<'a>),
+	Inbuilt(InbuiltStruct),
+}
+
 impl<'a> PartialEq for RuntimeEnumType<'a> {
 	fn eq(&self, other: &Self) -> bool {
 		match (self, other) {
 			(RuntimeEnumType::User(l, _), RuntimeEnumType::User(r, _)) => l == r,
 			(RuntimeEnumType::Inbuilt(l), RuntimeEnumType::Inbuilt(r)) => l == r,
+			_ => false,
+		}
+	}
+}
+
+impl<'a> PartialEq for RuntimeStructType<'a> {
+	fn eq(&self, other: &Self) -> bool {
+		match (self, other) {
+			(RuntimeStructType::User(l, _), RuntimeStructType::User(r, _)) => l == r,
+			(RuntimeStructType::Inbuilt(l), RuntimeStructType::Inbuilt(r)) => l == r,
 			_ => false,
 		}
 	}
@@ -57,7 +75,10 @@ impl<'a> RuntimeType<'a> {
 			TypeType::Str => Self::Str,
 			TypeType::Bool => Self::Bool,
 			TypeType::Other(ref u) => match u.resolved.unwrap() {
-				ResolvedType::Struct(id) => Self::Struct(id, item_map.get_struct(id)),
+				ResolvedType::Struct(id) => match id {
+					StructType::User(id) => Self::Struct(RuntimeStructType::User(id, item_map.get_struct(id))),
+					StructType::Inbuilt(id) => Self::Struct(RuntimeStructType::Inbuilt(id)),
+				},
 				ResolvedType::Enum(id) => match id {
 					EnumType::User(id) => Self::Enum(RuntimeEnumType::User(id, item_map.get_enum(id))),
 					EnumType::Inbuilt(id) => Self::Enum(RuntimeEnumType::Inbuilt(id)),
@@ -84,7 +105,7 @@ impl<'a> PartialEq for RuntimeType<'a> {
 			| (RuntimeType::None, RuntimeType::None)
 			| (RuntimeType::Code, RuntimeType::Code)
 			| (RuntimeType::TemplateValue, RuntimeType::TemplateValue) => true,
-			(RuntimeType::Struct(l, _), RuntimeType::Struct(r, _)) => l == r,
+			(RuntimeType::Struct(l), RuntimeType::Struct(r)) => l == r,
 			(RuntimeType::Enum(l), RuntimeType::Enum(r)) => l == r,
 			(RuntimeType::Array(l), RuntimeType::Array(r)) => l == r,
 			(RuntimeType::Map(lk, lv), RuntimeType::Map(rk, rv)) => lk == rk && lv == rv,
@@ -118,7 +139,10 @@ impl Display for RuntimeType<'_> {
 			Self::Num => "num".to_string(),
 			Self::Str => "str".to_string(),
 			Self::Bool => "bool".to_string(),
-			Self::Struct(_, s) => s.name.0.clone(),
+			Self::Struct(s) => match s {
+				RuntimeStructType::User(_, e) => e.name.0.clone(),
+				RuntimeStructType::Inbuilt(e) => e.to_string(),
+			},
 			Self::Enum(e) => match e {
 				RuntimeEnumType::User(_, e) => e.name.0.clone(),
 				RuntimeEnumType::Inbuilt(e) => e.to_string(),
@@ -200,7 +224,7 @@ pub enum FunctionValue<'a> {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Object<'a> {
-	pub id: StructId,
+	pub id: RuntimeStructType<'a>,
 	pub fields: HashMap<String, Value<'a>>,
 }
 
@@ -236,7 +260,7 @@ impl<'a> Value<'a> {
 				}),
 				_ => unreachable!("tried to get type of inbuilt function"),
 			},
-			Self::Object(obj) => RuntimeType::Struct(obj.id, item_map.get_struct(obj.id)),
+			Self::Object(obj) => RuntimeType::Struct(obj.id.clone()),
 			Self::Enum(access) => match access.id {
 				EnumType::Inbuilt(e) => RuntimeType::Enum(RuntimeEnumType::Inbuilt(e)),
 				EnumType::User(e) => RuntimeType::Enum(RuntimeEnumType::User(e, item_map.get_enum(e))),
