@@ -66,6 +66,7 @@ where
 	'a: 'b,
 {
 	mode: ParserMode,
+	struct_literal_allowed: bool,
 	file: &'a [String],
 	lexer: Peekable<Lexer<'b>>,
 	item_map: &'b mut ItemMap<'a>,
@@ -257,6 +258,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 	) -> Self {
 		Self {
 			mode,
+			struct_literal_allowed: true,
 			file,
 			lexer: lexer.peekable(),
 			item_map: type_map,
@@ -1096,10 +1098,12 @@ impl<'a, 'b> Parser<'a, 'b> {
 	fn parse_component(&mut self) -> Result<(Component<'a>, Range<usize>), Diagnostic> {
 		let name = self.parse_expression(ExpressionParseMode::Normal)?;
 		let node = peek!(self, TokenType::Ident(i) if i == "on", if {
+			self.struct_literal_allowed = false;
 			Some(Box::new(self.parse_expression(ExpressionParseMode::Normal)?))
 		} else {
 			None
 		});
+		self.struct_literal_allowed = true;
 		let statements = self.parse_template_block()?;
 		Ok((
 			Component {
@@ -1112,7 +1116,9 @@ impl<'a, 'b> Parser<'a, 'b> {
 	}
 
 	fn parse_animation(&mut self) -> Result<(Animation<'a>, Range<usize>), Diagnostic> {
+		self.struct_literal_allowed = false;
 		let name = self.parse_expression(ExpressionParseMode::Normal)?;
+		self.struct_literal_allowed = true;
 		let args = self.parse_values(ExpressionParseMode::Normal)?;
 		let range = args.1.range;
 		let mut args_iter = args.0.into_iter();
@@ -1251,7 +1257,28 @@ impl<'a, 'b> Parser<'a, 'b> {
 					} else {
 						let path = p.parse_path()?;
 						let r = path.1.clone();
-						Ok(Expression(ExpressionType::Access(Access { path, resolved: None }), r))
+						if let Some(tok) = p.peek() {
+							if p.struct_literal_allowed && matches!(tok.0, TokenType::LeftBrace) {
+								let ty = Type(TypeType::User(UserType { path, resolved: None }), r.clone());
+								if mode != ExpressionParseMode::Template {
+									let values = p.parse_values(mode)?;
+									Ok(Expression(
+										ExpressionType::StructCreate(StructCreate { ty, values: values.0 }),
+										p.loc(merge_range!(r.range, values.1.range)),
+									))
+								} else {
+									Err(Diagnostic::new(
+										Level::Error,
+										"struct creation is not allowed in template expressions",
+									)
+									.add_label(Label::primary("the struct was created here", r)))
+								}
+							} else {
+								Ok(Expression(ExpressionType::Access(Access { path, resolved: None }), r))
+							}
+						} else {
+							Ok(Expression(ExpressionType::Access(Access { path, resolved: None }), r))
+						}
 					}
 				}),
 				infix: None,
@@ -1537,12 +1564,14 @@ impl<'a, 'b> Parser<'a, 'b> {
 					let mut range = if_tok.1;
 					let mut chain = IfChain {
 						ifs: vec![{
+							p.struct_literal_allowed = false;
 							let expr = Box::new(p.parse_expression(if mode == ExpressionParseMode::RPNCode {
 								ExpressionParseMode::RPNCode
 							} else {
 								ExpressionParseMode::Normal
 							})?);
 							expect!(p, TokenType::LeftBrace, "expected `block` after `if` condition");
+							p.struct_literal_allowed = true;
 							let block = p.parse_block(mode)?;
 							range = merge_range!(range, block.1.range);
 							(expr, block.0, p.loc(range.clone()))
@@ -1614,27 +1643,6 @@ impl<'a, 'b> Parser<'a, 'b> {
 				}),
 				infix: None,
 			}),
-			TokenType::Struct => Some(&ParseRule {
-				prefix: Some(&|p, mode| {
-					let range = next!(p).1;
-					let path = p.parse_path()?;
-					let r = path.1.clone();
-					let ty = Type(TypeType::User(UserType { path, resolved: None }), r);
-					if mode != ExpressionParseMode::Template {
-						let values = p.parse_values(mode)?;
-						Ok(Expression(
-							ExpressionType::StructCreate(StructCreate { ty, values: values.0 }),
-							p.loc(merge_range!(range, values.1.range)),
-						))
-					} else {
-						Err(
-							Diagnostic::new(Level::Error, "struct creation is not allowed in template expressions")
-								.add_label(Label::primary("the struct was created here", p.loc(range))),
-						)
-					}
-				}),
-				infix: None,
-			}),
 			TokenType::Return => Some(&ParseRule {
 				prefix: Some(&|p, mode| {
 					let tok = next!(p);
@@ -1672,7 +1680,9 @@ impl<'a, 'b> Parser<'a, 'b> {
 			TokenType::Switch => Some(&ParseRule {
 				prefix: Some(&|p, mode| {
 					let tok = next!(p);
+					p.struct_literal_allowed = false;
 					let on = p.parse_expression(mode)?;
+					p.struct_literal_allowed = true;
 					expect!(p, TokenType::LeftBrace, "expected `{`");
 					let mut cases = Vec::new();
 					let next = peek!(p, else return Err(Diagnostic::new(Level::Error, "unexpected end of file")));
