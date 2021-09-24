@@ -4,10 +4,10 @@ enum ElevatorID {
 }
 
 fn elevator_id_to_string(id: ElevatorID) -> str {
-    switch id {
-        ElevatorID.Left -> "Left",
-        ElevatorID.Right -> "Right"
-    }
+    [
+        ElevatorID.Left: "Left",
+        ElevatorID.Right: "Right"
+    ][id]
 }
 
 template Elevators(id: ElevatorID) {

@@ -1045,7 +1045,6 @@ impl<'a, 'b> Parser<'a, 'b> {
 		};
 
 		let mut expr = prefix(self, mode)?;
-		expr.1 = self.loc(merge_range!(tok.1, expr.1.range));
 		loop {
 			let tok = peek!(self, else return Ok(expr));
 			let infix = if let Some(rule) = self.get_parse_rule(&tok.0) {
@@ -1064,7 +1063,9 @@ impl<'a, 'b> Parser<'a, 'b> {
 
 			self.next();
 			expr = infix.0(self, expr, mode)?;
+			expr.1 = self.loc(merge_range!(tok.1, expr.1.range));
 		}
+		expr.1 = self.loc(merge_range!(tok.1, expr.1.range));
 
 		Ok(expr)
 	}

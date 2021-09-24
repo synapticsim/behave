@@ -368,49 +368,88 @@ impl<'a> ExpressionEvaluator<'a> {
 				},
 				ResolvedAccess::Local => {
 					let idx = self.evaluate_expression(index.as_ref())?;
-					let val = Self::value(&mut self.stack, &self.item_map, &access.path)?;
-					if let Value::Array(ty, array) = val {
-						if let Value::Number(idx) = idx {
-							let len = array.len();
-							if let Some(val) = array.into_iter().nth(idx as usize) {
-								if *ty == value.get_type(self.item_map) {
-									*val = value.clone();
-									Flow::Ok(value)
+					let array = Self::value(&mut self.stack, &self.item_map, &access.path)?;
+					match array {
+						Value::Array(ty, array) => {
+							if let Value::Number(idx) = idx {
+								let len = array.len();
+								if let Some(val) = array.into_iter().nth(idx as usize) {
+									if *ty == value.get_type(self.item_map) {
+										*val = value.clone();
+										Flow::Ok(value)
+									} else {
+										Flow::Err(vec![Diagnostic::new(Level::Error, "array assignment type mismatch")
+											.add_label(Label::primary(
+												format!(
+													"this expression has a result of type `{}`...",
+													value.get_type(self.item_map)
+												),
+												assignment.value.1.clone(),
+											))
+											.add_label(Label::secondary(
+												format!("...but array is of type `{}`", ty),
+												access.path.1.clone(),
+											))])
+									}
 								} else {
-									Flow::Err(vec![Diagnostic::new(Level::Error, "array assignment type mismatch")
+									Flow::Err(vec![Diagnostic::new(Level::Error, "array index out of bounds")
 										.add_label(Label::primary(
-											format!(
-												"this expression has a result of type `{}`...",
-												value.get_type(self.item_map)
-											),
-											assignment.value.1.clone(),
-										))
-										.add_label(Label::secondary(
-											format!("...but array is of type `{}`", ty),
-											access.path.1.clone(),
+											format!("array length is {}, but index was {}", len, idx as usize),
+											index.1.clone(),
 										))])
 								}
 							} else {
-								Flow::Err(vec![Diagnostic::new(Level::Error, "array index out of bounds")
+								Flow::Err(vec![Diagnostic::new(Level::Error, "array index must be a number")
 									.add_label(Label::primary(
-										format!("array length is {}, but index was {}", len, idx as usize),
+										format!("expression result is of type `{}`", idx.get_type(self.item_map)),
 										index.1.clone(),
 									))])
 							}
-						} else {
-							Flow::Err(vec![Diagnostic::new(Level::Error, "array index must be a number")
-								.add_label(Label::primary(
-									format!("expression result is of type `{}`", idx.get_type(self.item_map)),
-									index.1.clone(),
-								))])
-						}
-					} else {
-						Flow::Err(vec![Diagnostic::new(Level::Error, "can only index arrays").add_label(
-							Label::primary(
-								format!("expression result is of type `{}`", val.get_type(self.item_map)),
+						},
+						Value::Map(key, ty, map) => {
+							let idx_ty = idx.get_type(&self.item_map);
+							if idx_ty == *key {
+								for pair in map {
+									if pair.0 == idx {
+										if *ty == value.get_type(self.item_map) {
+											pair.1 = value.clone();
+											return Flow::Ok(value);
+										} else {
+											return Flow::Err(vec![Diagnostic::new(
+												Level::Error,
+												"map assignment type mismatch",
+											)
+											.add_label(Label::primary(
+												format!(
+													"this expression has a result of type `{}`...",
+													value.get_type(self.item_map)
+												),
+												assignment.value.1.clone(),
+											))
+											.add_label(Label::secondary(
+												format!("...but array is of type `{}`", ty),
+												access.path.1.clone(),
+											))]);
+										}
+									}
+								}
+
+								Flow::Err(vec![Diagnostic::new(Level::Error, "key does not exist in map")
+									.add_label(Label::primary("key does not exist", index.1.clone()))])
+							} else {
+								Flow::Err(vec![Diagnostic::new(Level::Error, "incorrect map index type")
+									.add_label(Label::primary(
+										format!("expression result is of type `{}`", idx_ty),
+										index.1.clone(),
+									))
+									.add_note(format!("expected type `{}`", key))])
+							}
+						},
+						_ => Flow::Err(vec![Diagnostic::new(Level::Error, "can only index arrays or maps")
+							.add_label(Label::primary(
+								format!("expression result is of type `{}`", array.get_type(self.item_map)),
 								access.path.1.clone(),
-							),
-						)])
+							))]),
 					}
 				},
 			},
