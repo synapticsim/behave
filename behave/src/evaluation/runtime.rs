@@ -172,6 +172,12 @@ impl<'a> ExpressionEvaluator<'a> {
 		evaluate!(self, on expr, type Number error)
 	}
 
+	pub fn evaluate_as_function(
+		&mut self, expr: &Expression<'a>, error: &str,
+	) -> Result<FunctionValue, Vec<Diagnostic>> {
+		evaluate!(self, on expr, type Function error)
+	}
+
 	pub fn evaluate_behavior(&mut self, behavior: &Behavior<'a>) -> Result<Vec<TemplateValue<'a>>, Vec<Diagnostic>> {
 		match self.evaluate_template_block(&behavior.0) {
 			Flow::Ok(value) => match value {

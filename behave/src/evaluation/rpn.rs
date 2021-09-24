@@ -6,6 +6,7 @@ use crate::ast::{
 	AssignmentTarget,
 	BinaryOperator,
 	Block,
+	Call,
 	EnumType,
 	Expression,
 	ExpressionType,
@@ -13,6 +14,8 @@ use crate::ast::{
 	Ident,
 	IfChain,
 	InbuiltEnum,
+	InbuiltFunction,
+	Location,
 	MouseEvent,
 	ResolvedAccess,
 	StatementType,
@@ -20,7 +23,7 @@ use crate::ast::{
 };
 use crate::diagnostic::{Diagnostic, Label, Level};
 use crate::evaluation::runtime::{ExpressionEvaluator, Flow};
-use crate::evaluation::value::{Code, RuntimeEnumType, RuntimeType, Value};
+use crate::evaluation::value::{Code, FunctionValue, RuntimeEnumType, RuntimeType, Value};
 use crate::output::xml::IndentIterator;
 
 #[derive(Clone)]
@@ -220,7 +223,7 @@ impl<'a, 'b> RPNCompiler<'a, 'b> {
 			ExpressionType::Assignment(assignment) => self.compile_assignment(assignment)?,
 			ExpressionType::Unary(op, expr) => self.compile_unary(*op, expr.as_ref())?,
 			ExpressionType::Binary(left, op, right) => self.compile_binary(*op, left.as_ref(), right.as_ref())?,
-			ExpressionType::Call(..) => todo!("RPN call not implemented"),
+			ExpressionType::Call(call) => self.compile_call(call)?,
 			ExpressionType::IfChain(chain) => self.compile_if(chain)?,
 			ExpressionType::Switch(_) => todo!("RPN switch not implemented"),
 			ExpressionType::While(_) => todo!("While not implemented"),
@@ -706,6 +709,26 @@ impl<'a, 'b> RPNCompiler<'a, 'b> {
 		}
 	}
 
+	fn compile_call(&mut self, call: &Call<'a>) -> Result<Code<'a>, Vec<Diagnostic>> {
+		let function = self
+			.evaluator
+			.evaluate_as_function(&call.callee, "call target must be a function")?;
+		if let FunctionValue::Inbuilt(inbuilt) = function {
+			match inbuilt {
+				InbuiltFunction::Format => self.compile_format(call.callee.1.clone(), &call.args),
+			}
+		} else {
+			Err(vec![Diagnostic::new(
+				Level::Error,
+				"can only call inbuilt functions in RPN",
+			)
+			.add_label(Label::primary(
+				"tried to call function here",
+				call.callee.1.clone(),
+			))])
+		}
+	}
+
 	fn compile_rpn_access(&mut self, expr: &Expression<'a>) -> Result<Code<'a>, Vec<Diagnostic>> {
 		let rpn = self
 			.evaluator
@@ -886,6 +909,79 @@ impl<'a, 'b> RPNCompiler<'a, 'b> {
 				ty: RuntimeType::None,
 			}
 		})
+	}
+
+	fn compile_format(&mut self, loc: Location<'a>, args: &[Expression<'a>]) -> Result<Code<'a>, Vec<Diagnostic>> {
+		if let Some(arg) = args.get(0) {
+			let mut fmt_string = self
+				.evaluator
+				.evaluate_as_string(arg, "format string must be of type `str`")?;
+			let format_replacement = fmt_string.matches("{}");
+			let arity = format_replacement.count();
+			if arity == args.len() - 1 {
+				let mut errors = Vec::new();
+				// I hate strings, please don't sue me.
+				for expr in args[1..].iter() {
+					let value = self.compile_expr(expr)?;
+					let replace = match value.ty {
+						RuntimeType::Str => "%s",
+						RuntimeType::Num => "%f",
+						RuntimeType::Bool => "%s",
+						_ => {
+							errors.push(
+								Diagnostic::new(Level::Error, "can only format primitive types").add_label(
+									Label::primary(
+										format!("this expression has a result of type `{}`", value.ty),
+										expr.1.clone(),
+									),
+								),
+							);
+							continue;
+						},
+					};
+					fmt_string = fmt_string.replacen("{}", &replace, 1);
+				}
+
+				let mut value = String::new();
+
+				for expr in args[1..].iter().rev() {
+					let code = self.compile_expr(expr)?;
+					let data = match code.ty {
+						RuntimeType::Str => code.value,
+						RuntimeType::Num => code.value,
+						RuntimeType::Bool => format!("{} if{{ 'true' }} els{{ 'false' }}", code.value),
+						_ => "".to_string(),
+					};
+					value.push_str(&data);
+					value.push(' ');
+				}
+				value.push('\'');
+				value.push_str(&fmt_string);
+				value.push('\'');
+				value.push_str(" (F:Format)");
+
+				if errors.len() == 0 {
+					Ok(Code {
+						value,
+						ty: RuntimeType::Str,
+					})
+				} else {
+					Err(errors)
+				}
+			} else {
+				Err(vec![Diagnostic::new(
+					Level::Error,
+					"incorrect number of format arguments",
+				)
+				.add_label(Label::primary(
+					format!("expected {} arguments, found {}", arity, args.len() - 1),
+					loc,
+				))])
+			}
+		} else {
+			Err(vec![Diagnostic::new(Level::Error, "missing format string")
+				.add_label(Label::primary("in this invocation of `format`", loc))])
+		}
 	}
 
 	fn indent_string(&self, s: &mut String) {
