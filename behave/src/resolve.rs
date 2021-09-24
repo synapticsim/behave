@@ -213,18 +213,37 @@ impl<'a> Resolver<'a> {
 
 impl ASTPass for Resolver<'_> {
 	fn ty<'b>(&mut self, ty: &mut Type<'b>) {
-		if let TypeType::Other(ref mut user) = ty.0 {
-			if let Some(resolved) = self
-				.types
-				.get(&user.path.0.iter().map(|s| s.0.clone()).collect::<Vec<_>>())
-			{
-				user.resolved = Some(*resolved);
-			} else {
-				self.diagnostics.push(
-					Diagnostic::new(Level::Error, "type does not exist")
-						.add_label(Label::primary("here", user.path.1.clone())),
-				)
-			}
+		match ty.0 {
+			TypeType::Other(ref mut user) => {
+				if let Some(resolved) = self
+					.types
+					.get(&user.path.0.iter().map(|s| s.0.clone()).collect::<Vec<_>>())
+				{
+					user.resolved = Some(*resolved);
+				} else {
+					self.diagnostics.push(
+						Diagnostic::new(Level::Error, "type does not exist")
+							.add_label(Label::primary("here", user.path.1.clone())),
+					)
+				}
+			},
+			TypeType::Array(ref mut ty) => self.ty(ty.as_mut()),
+			TypeType::Map(ref mut key, ref mut value) => {
+				self.ty(key.as_mut());
+				self.ty(value.as_mut());
+			},
+			TypeType::Sum(ref mut tys) => {
+				for ty in tys.iter_mut() {
+					self.ty(ty);
+				}
+			},
+			TypeType::Function(ref mut f) => {
+				for ty in f.args.iter_mut() {
+					self.ty(ty);
+				}
+				f.ret.as_mut().map(|ty| self.ty(ty.as_mut()));
+			},
+			_ => {},
 		}
 	}
 

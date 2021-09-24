@@ -16,27 +16,38 @@ use crate::ast::{
 	TypeType,
 };
 use crate::diagnostic::{Diagnostic, Label, Level};
-use crate::items::{ItemMap, StructId};
+use crate::items::{EnumId, ItemMap, StructId};
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub enum RuntimeType<'a> {
 	Num,
 	Str,
 	Bool,
-	Struct(&'a Struct<'a>),
+	Struct(StructId, &'a Struct<'a>),
 	Enum(RuntimeEnumType<'a>),
 	Array(Box<RuntimeType<'a>>),
 	Map(Box<RuntimeType<'a>>, Box<RuntimeType<'a>>),
+	Sum(Vec<RuntimeType<'a>>),
 	Function(RuntimeFunctionType<'a>),
 	None,
 	Code,
 	TemplateValue,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub enum RuntimeEnumType<'a> {
-	User(&'a Enum<'a>),
+	User(EnumId, &'a Enum<'a>),
 	Inbuilt(InbuiltEnum),
+}
+
+impl<'a> PartialEq for RuntimeEnumType<'a> {
+	fn eq(&self, other: &Self) -> bool {
+		match (self, other) {
+			(RuntimeEnumType::User(l, _), RuntimeEnumType::User(r, _)) => l == r,
+			(RuntimeEnumType::Inbuilt(l), RuntimeEnumType::Inbuilt(r)) => l == r,
+			_ => false,
+		}
+	}
 }
 
 impl<'a> RuntimeType<'a> {
@@ -46,9 +57,9 @@ impl<'a> RuntimeType<'a> {
 			TypeType::Str => Self::Str,
 			TypeType::Bool => Self::Bool,
 			TypeType::Other(ref u) => match u.resolved.unwrap() {
-				ResolvedType::Struct(id) => Self::Struct(item_map.get_struct(id)),
+				ResolvedType::Struct(id) => Self::Struct(id, item_map.get_struct(id)),
 				ResolvedType::Enum(id) => match id {
-					EnumType::User(id) => Self::Enum(RuntimeEnumType::User(item_map.get_enum(id))),
+					EnumType::User(id) => Self::Enum(RuntimeEnumType::User(id, item_map.get_enum(id))),
 					EnumType::Inbuilt(id) => Self::Enum(RuntimeEnumType::Inbuilt(id)),
 				},
 			},
@@ -57,8 +68,31 @@ impl<'a> RuntimeType<'a> {
 				Box::new(Self::from(item_map, &from.0)),
 				Box::new(Self::from(item_map, &to.0)),
 			),
+			TypeType::Sum(ref ty) => Self::Sum(ty.iter().map(|ty| RuntimeType::from(item_map, &ty.0)).collect()),
 			TypeType::Function(ref f) => Self::Function(RuntimeFunctionType::from(item_map, f)),
 			TypeType::Code => Self::Code,
+		}
+	}
+}
+
+impl<'a> PartialEq for RuntimeType<'a> {
+	fn eq(&self, other: &Self) -> bool {
+		match (self, other) {
+			(RuntimeType::Num, RuntimeType::Num)
+			| (RuntimeType::Str, RuntimeType::Str)
+			| (RuntimeType::Bool, RuntimeType::Bool)
+			| (RuntimeType::None, RuntimeType::None)
+			| (RuntimeType::Code, RuntimeType::Code)
+			| (RuntimeType::TemplateValue, RuntimeType::TemplateValue) => true,
+			(RuntimeType::Struct(l, _), RuntimeType::Struct(r, _)) => l == r,
+			(RuntimeType::Enum(l), RuntimeType::Enum(r)) => l == r,
+			(RuntimeType::Array(l), RuntimeType::Array(r)) => l == r,
+			(RuntimeType::Map(lk, lv), RuntimeType::Map(rk, rv)) => lk == rk && lv == rv,
+			(RuntimeType::Sum(l), RuntimeType::Sum(r)) => l == r,
+			(RuntimeType::Sum(l), r) => l.contains(r),
+			(l, RuntimeType::Sum(r)) => r.contains(l),
+			(RuntimeType::Function(l), RuntimeType::Function(r)) => l == r,
+			_ => false,
 		}
 	}
 }
@@ -84,13 +118,22 @@ impl Display for RuntimeType<'_> {
 			Self::Num => "num".to_string(),
 			Self::Str => "str".to_string(),
 			Self::Bool => "bool".to_string(),
-			Self::Struct(s) => s.name.0.clone(),
+			Self::Struct(_, s) => s.name.0.clone(),
 			Self::Enum(e) => match e {
-				RuntimeEnumType::User(e) => e.name.0.clone(),
+				RuntimeEnumType::User(_, e) => e.name.0.clone(),
 				RuntimeEnumType::Inbuilt(e) => e.to_string(),
 			},
 			Self::Array(ty) => format!("[{}]", *ty),
 			Self::Map(from, to) => format!("[{} : {}]", *from, *to),
+			Self::Sum(ty) => {
+				let mut iter = ty.iter();
+				let mut str = iter.next().unwrap().to_string();
+				for ty in iter {
+					str.push_str(" | ");
+					str.push_str(&ty.to_string());
+				}
+				str
+			},
 			Self::Function(f) => f.to_string(),
 			Self::None => "none".to_string(),
 			Self::TemplateValue => "template value".to_string(),
@@ -107,7 +150,7 @@ impl Display for RuntimeFunctionType<'_> {
 		if let Some(arg) = iter.next() {
 			write!(f, "{}", arg)?;
 		}
-		while let Some(arg) = iter.next() {
+		for arg in iter {
 			write!(f, ", {}", arg)?;
 		}
 		write!(f, ")")?;
@@ -193,10 +236,10 @@ impl<'a> Value<'a> {
 				}),
 				_ => unreachable!("tried to get type of inbuilt function"),
 			},
-			Self::Object(obj) => RuntimeType::Struct(item_map.get_struct(obj.id)),
+			Self::Object(obj) => RuntimeType::Struct(obj.id, item_map.get_struct(obj.id)),
 			Self::Enum(access) => match access.id {
 				EnumType::Inbuilt(e) => RuntimeType::Enum(RuntimeEnumType::Inbuilt(e)),
-				EnumType::User(e) => RuntimeType::Enum(RuntimeEnumType::User(item_map.get_enum(e))),
+				EnumType::User(e) => RuntimeType::Enum(RuntimeEnumType::User(e, item_map.get_enum(e))),
 			},
 			Self::Array(ty, _) => RuntimeType::Array(Box::new(ty.clone())),
 			Self::Map(key, value, _) => RuntimeType::Map(Box::new(key.clone()), Box::new(value.clone())),

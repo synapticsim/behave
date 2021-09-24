@@ -141,6 +141,7 @@ pub enum TypeType<'a> {
 	Other(OtherType<'a>),
 	Array(Box<Type<'a>>),
 	Map(Box<Type<'a>>, Box<Type<'a>>),
+	Sum(Vec<Type<'a>>),
 	Function(FunctionType<'a>),
 	Code,
 }
@@ -191,6 +192,7 @@ pub enum ExpressionType<'a> {
 	Switch(Switch<'a>),
 	While(While<'a>),
 	For(For<'a>),
+	Is(Box<Expression<'a>>, Type<'a>),
 	Return(Option<Box<Expression<'a>>>),
 	Break(Option<Box<Expression<'a>>>),
 	Behavior(BehaviorExpression<'a>),
@@ -519,26 +521,18 @@ pub trait ASTPass {
 			ExpressionType::RPNAccess(ref mut expr) => self.expression(&mut expr.0),
 			ExpressionType::Index(ref mut index) => self.index(index),
 			ExpressionType::Assignment(ref mut assignment) => self.assignment(assignment),
-			ExpressionType::Unary(_, ref mut expr) => self.expression(&mut expr.0),
-			ExpressionType::Binary(ref mut left, _, ref mut right) => {
-				self.expression(&mut left.0);
-				self.expression(&mut right.0);
+			ExpressionType::Unary(ref mut op, ref mut expr) => self.unary(op, expr),
+			ExpressionType::Binary(ref mut left, ref mut op, ref mut right) => {
+				self.binary(left.as_mut(), op, right.as_mut())
 			},
+			ExpressionType::Is(ref mut expr, ref mut ty) => self.is(expr, ty),
 			ExpressionType::Call(ref mut call) => self.call(call),
 			ExpressionType::IfChain(ref mut chain) => self.if_chain(chain),
 			ExpressionType::Switch(ref mut switch) => self.switch(switch),
 			ExpressionType::While(ref mut while_loop) => self.while_loop(while_loop),
 			ExpressionType::For(ref mut for_loop) => self.for_loop(for_loop),
-			ExpressionType::Return(ref mut expr) => {
-				if let Some(expr) = expr {
-					self.expression(&mut expr.0)
-				}
-			},
-			ExpressionType::Break(ref mut expr) => {
-				if let Some(expr) = expr {
-					self.expression(&mut expr.0)
-				}
-			},
+			ExpressionType::Return(ref mut expr) => self.ret(expr.as_mut().map(|b| b.as_mut())),
+			ExpressionType::Break(ref mut expr) => self.brek(expr.as_mut().map(|b| b.as_mut())),
 			ExpressionType::Behavior(expr) => match expr {
 				BehaviorExpression::Use(ref mut us) => self.template_use(us),
 				BehaviorExpression::Component(ref mut component) => self.component(component),
@@ -641,6 +635,18 @@ pub trait ASTPass {
 		self.expression(&mut assign.value.0);
 	}
 
+	fn unary(&mut self, _op: &mut UnaryOperator, expr: &mut Expression) { self.expression(&mut expr.0); }
+
+	fn binary(&mut self, left: &mut Expression, _op: &mut BinaryOperator, right: &mut Expression) {
+		self.expression(&mut left.0);
+		self.expression(&mut right.0);
+	}
+
+	fn is(&mut self, expr: &mut Expression, ty: &mut Type) {
+		self.expression(&mut expr.0);
+		self.ty(ty);
+	}
+
 	fn call(&mut self, call: &mut Call) {
 		self.expression(&mut call.callee.0);
 		for arg in call.args.iter_mut() {
@@ -670,6 +676,10 @@ pub trait ASTPass {
 	fn for_loop(&mut self, _for_loop: &mut For) {}
 
 	fn while_loop(&mut self, _while_loop: &mut While) {}
+
+	fn ret(&mut self, expr: Option<&mut Expression>) { expr.map(|expr| self.expression(&mut expr.0)); }
+
+	fn brek(&mut self, expr: Option<&mut Expression>) { expr.map(|expr| self.expression(&mut expr.0)); }
 
 	fn template_use(&mut self, us: &mut Use) {
 		for arg in us.args.iter_mut() {

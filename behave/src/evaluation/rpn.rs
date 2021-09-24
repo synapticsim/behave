@@ -237,7 +237,7 @@ impl<'a, 'b> RPNCompiler<'a, 'b> {
 				GlobalAccess::Enum(e) => match e.id {
 					EnumType::User(id) => Ok(Code {
 						value: format!("{}", e.value),
-						ty: RuntimeType::Enum(RuntimeEnumType::User(self.evaluator.item_map.get_enum(id))),
+						ty: RuntimeType::Enum(RuntimeEnumType::User(id, self.evaluator.item_map.get_enum(id))),
 					}),
 					EnumType::Inbuilt(i) => Ok(Code {
 						value: match i {
@@ -270,7 +270,7 @@ impl<'a, 'b> RPNCompiler<'a, 'b> {
 						Value::Enum(e) => match e.id {
 							EnumType::User(id) => Code {
 								value: format!("{}", e.value),
-								ty: RuntimeType::Enum(RuntimeEnumType::User(self.evaluator.item_map.get_enum(id))),
+								ty: RuntimeType::Enum(RuntimeEnumType::User(id, self.evaluator.item_map.get_enum(id))),
 							},
 							EnumType::Inbuilt(i) => Code {
 								value: match i {
@@ -657,7 +657,7 @@ impl<'a, 'b> RPNCompiler<'a, 'b> {
 							ty: RuntimeType::Bool,
 						}),
 					},
-					RuntimeEnumType::User(_) => Ok(Code {
+					RuntimeEnumType::User(..) => Ok(Code {
 						value: format!("{} {} ==", lhs.value, rhs.value),
 						ty: RuntimeType::Bool,
 					}),
@@ -688,7 +688,7 @@ impl<'a, 'b> RPNCompiler<'a, 'b> {
 							ty: RuntimeType::Bool,
 						}),
 					},
-					RuntimeEnumType::User(_) => Ok(Code {
+					RuntimeEnumType::User(..) => Ok(Code {
 						value: format!("{} {} !=", lhs.value, rhs.value),
 						ty: RuntimeType::Bool,
 					}),

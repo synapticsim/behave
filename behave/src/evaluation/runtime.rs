@@ -30,6 +30,7 @@ use crate::ast::{
 	StatementType,
 	StructCreate,
 	Switch,
+	Type,
 	TypeType,
 	UnaryOperator,
 	Use,
@@ -205,6 +206,7 @@ impl<'a> ExpressionEvaluator<'a> {
 			Assignment(assignment) => self.evaluate_assignment(assignment)?,
 			Unary(op, expr) => self.evaluate_unary(*op, expr)?,
 			Binary(left, op, right) => self.evaluate_binary(*op, left, right)?,
+			Is(expr, ty) => self.evaluate_is(expr, ty)?,
 			Call(call) => self.evaluate_call(call)?,
 			IfChain(chain) => self.evaluate_if(chain)?,
 			Switch(switch) => self.evaluate_switch(switch)?,
@@ -292,7 +294,7 @@ impl<'a> ExpressionEvaluator<'a> {
 								return Err(Diagnostic::new(Level::Error, "missing field").add_label(Label::primary(
 									format!(
 										"type `{}` does not have a field `{}`",
-										RuntimeType::Struct(item_map.get_struct(object.id)),
+										RuntimeType::Struct(object.id, item_map.get_struct(object.id)),
 										ident.0
 									),
 									ident.1.clone(),
@@ -992,6 +994,17 @@ impl<'a> ExpressionEvaluator<'a> {
 					))]),
 			},
 		}
+	}
+
+	fn evaluate_is(&mut self, expr: &Expression<'a>, ty: &Type<'a>) -> Flow<'a> {
+		let value = self.evaluate_expression(expr)?;
+		Flow::Ok(Value::Boolean(
+			if value.get_type(&self.item_map) == RuntimeType::from(&self.item_map, &ty.0) {
+				true
+			} else {
+				false
+			},
+		))
 	}
 
 	fn evaluate_call(&mut self, call: &Call<'a>) -> Flow<'a> {

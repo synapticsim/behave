@@ -683,78 +683,91 @@ impl<'a, 'b> Parser<'a, 'b> {
 	}
 
 	fn parse_type(&mut self) -> Result<Type<'a>, Diagnostic> {
-		let tok = next!(self);
-		let ty = match tok.0 {
-			TokenType::Num => Type(TypeType::Num, self.loc(tok.1)),
-			TokenType::Str => Type(TypeType::Str, self.loc(tok.1)),
-			TokenType::Bool => Type(TypeType::Bool, self.loc(tok.1)),
-			TokenType::Code => Type(TypeType::Code, self.loc(tok.1)),
-			TokenType::Ident(s) => {
-				let mut path = vec![Ident(s, self.loc(tok.1.clone()))];
-				let mut range = tok.1;
-				loop {
-					peek!(self, TokenType::Period, else break);
-					let ident = self.parse_ident()?;
-					range = merge_range!(range, &ident.1.range);
-					path.push(ident);
-				}
-
-				Type(
-					TypeType::Other(OtherType {
-						path: Path(path, self.loc(range.clone())),
-						resolved: None,
-					}),
-					self.loc(range),
-				)
-			},
-			TokenType::LeftBracket => {
-				let key = self.parse_type()?;
-				let ty = peek!(self, TokenType::Colon, if {
-					let value = self.parse_type()?;
-					TypeType::Map(Box::new(key), Box::new(value))
-				} else {
-					TypeType::Array(Box::new(key))
-				});
-				Type(ty, {
-					let temp = expect!(self, TokenType::RightBracket, "expected `]`");
-					self.loc(merge_range!(tok.1, temp))
-				})
-			},
-			TokenType::Function => {
-				expect!(self, TokenType::LeftParen, "expected `(`");
-				let mut args = Vec::new();
-				let mut range = tok.1;
-				if let Some(tok) = self.peek() {
-					if let TokenType::RightParen = tok.0 {
-						range = tok.1;
-					} else {
-						loop {
-							let ty = self.parse_type()?;
-							range = merge_range!(range, &ty.1.range);
-							args.push(ty);
-							peek!(self, TokenType::Comma, else break);
-						}
+		let mut sum_ty = Vec::new();
+		loop {
+			let tok = next!(self);
+			sum_ty.push(match tok.0 {
+				TokenType::Num => Type(TypeType::Num, self.loc(tok.1)),
+				TokenType::Str => Type(TypeType::Str, self.loc(tok.1)),
+				TokenType::Bool => Type(TypeType::Bool, self.loc(tok.1)),
+				TokenType::Code => Type(TypeType::Code, self.loc(tok.1)),
+				TokenType::Ident(s) => {
+					let mut path = vec![Ident(s, self.loc(tok.1.clone()))];
+					let mut range = tok.1;
+					loop {
+						peek!(self, TokenType::Period, else break);
+						let ident = self.parse_ident()?;
+						range = merge_range!(range, &ident.1.range);
+						path.push(ident);
 					}
-				} else {
-					return Err(Diagnostic::new(
-						Level::Error,
-						"unexpected end of file: expected type or `)`",
-					));
-				}
-				range = merge_range!(range, expect!(self, TokenType::RightParen, "expected `)`"));
-				let mut ty = FunctionType { args, ret: None };
-				peek!(self, TokenType::Arrow, if {
-					let ret = self.parse_type()?;
-					range = merge_range!(range, &ret.1.range);
-					ty.ret = Some(Box::new(ret))
-				});
-				Type(TypeType::Function(ty), self.loc(range))
-			},
-			_ => {
-				return Err(Diagnostic::new(Level::Error, "expected type").add_label(Label::unexpected(self.file, &tok)))
-			},
-		};
-		Ok(ty)
+
+					Type(
+						TypeType::Other(OtherType {
+							path: Path(path, self.loc(range.clone())),
+							resolved: None,
+						}),
+						self.loc(range),
+					)
+				},
+				TokenType::LeftBracket => {
+					let key = self.parse_type()?;
+					let ty = peek!(self, TokenType::Colon, if {
+						let value = self.parse_type()?;
+						TypeType::Map(Box::new(key), Box::new(value))
+					} else {
+						TypeType::Array(Box::new(key))
+					});
+					Type(ty, {
+						let temp = expect!(self, TokenType::RightBracket, "expected `]`");
+						self.loc(merge_range!(tok.1, temp))
+					})
+				},
+				TokenType::Function => {
+					expect!(self, TokenType::LeftParen, "expected `(`");
+					let mut args = Vec::new();
+					let mut range = tok.1;
+					if let Some(tok) = self.peek() {
+						if let TokenType::RightParen = tok.0 {
+							range = tok.1;
+						} else {
+							loop {
+								let ty = self.parse_type()?;
+								range = merge_range!(range, &ty.1.range);
+								args.push(ty);
+								peek!(self, TokenType::Comma, else break);
+							}
+						}
+					} else {
+						return Err(Diagnostic::new(
+							Level::Error,
+							"unexpected end of file: expected type or `)`",
+						));
+					}
+					range = merge_range!(range, expect!(self, TokenType::RightParen, "expected `)`"));
+					let mut ty = FunctionType { args, ret: None };
+					peek!(self, TokenType::Arrow, if {
+						let ret = self.parse_type()?;
+						range = merge_range!(range, &ret.1.range);
+						ty.ret = Some(Box::new(ret))
+					});
+					Type(TypeType::Function(ty), self.loc(range))
+				},
+				_ => {
+					return Err(
+						Diagnostic::new(Level::Error, "expected type").add_label(Label::unexpected(self.file, &tok))
+					)
+				},
+			});
+
+			peek!(self, TokenType::Pipe, else break);
+		}
+
+		if sum_ty.len() == 1 {
+			Ok(sum_ty.into_iter().next().unwrap())
+		} else {
+			let range = merge_range!(sum_ty[0].1.range.clone(), sum_ty.last().unwrap().1.range.clone());
+			Ok(Type(TypeType::Sum(sum_ty), self.loc(range)))
+		}
 	}
 
 	fn parse_template_block(&mut self) -> Result<(Vec<Statement<'a>>, Location<'a>), Diagnostic> {
@@ -1567,6 +1580,24 @@ impl<'a, 'b> Parser<'a, 'b> {
 					))
 				}),
 				infix: None,
+			}),
+			TokenType::Is => Some(&ParseRule {
+				prefix: None,
+				infix: Some((
+					&|p, left, mode| {
+						let ty = p.parse_type()?;
+						let range = merge_range!(left.1.range.clone(), ty.1.range.clone());
+						if mode == ExpressionParseMode::Normal {
+							Ok(Expression(ExpressionType::Is(Box::new(left), ty), p.loc(range)))
+						} else {
+							Err(
+								Diagnostic::new(Level::Error, "an is expression is not allowed in this context")
+									.add_label(Label::primary("unexpected expression", p.loc(range))),
+							)
+						}
+					},
+					precedence::ASSIGNMENT,
+				)),
 			}),
 			TokenType::If => Some(&ParseRule {
 				prefix: Some(&|p, mode| {

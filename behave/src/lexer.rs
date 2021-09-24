@@ -52,6 +52,7 @@ impl Iterator for Lexer<'_> {
 			'.' => Token(TokenType::Period, c.0..c.0 + 1),
 			':' => Token(TokenType::Colon, c.0..c.0 + 1),
 			';' => Token(TokenType::Semicolon, c.0..c.0 + 1),
+			'|' => Token(TokenType::Pipe, c.0..c.0 + 1),
 			'+' => {
 				if self.source.peek().map(|c| c.1 == '=').unwrap_or(false) {
 					self.source.next();
@@ -249,7 +250,7 @@ lazy_static! {
 		m.insert("else", TokenType::Else);
 		m.insert("while", TokenType::While);
 		m.insert("for", TokenType::For);
-		m.insert("in", TokenType::In);
+		m.insert("is", TokenType::Is);
 		m.insert("import", TokenType::Import);
 		m.insert("str", TokenType::Str);
 		m.insert("code", TokenType::Code);
