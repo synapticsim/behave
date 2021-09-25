@@ -1,17 +1,20 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
 
 use crate::ast::{
+	Cursor,
 	Enum,
 	EnumAccess,
 	EnumType,
 	Function,
 	FunctionType,
+	Hitbox,
 	Ident,
 	InbuiltEnum,
 	InbuiltFunction,
 	InbuiltStruct,
 	Location,
+	MouseEvent,
 	ResolvedType,
 	Struct,
 	StructType,
@@ -213,6 +216,7 @@ pub enum TemplateValue<'a> {
 	Animation(RuntimeAnimation<'a>),
 	Visibility(String),
 	Emissive(String),
+	Interaction(RuntimeInteraction<'a>),
 	Block(Vec<TemplateValue<'a>>),
 }
 
@@ -241,6 +245,30 @@ pub struct RuntimeAnimation<'a> {
 	pub length: f64,
 	pub lag: f64,
 	pub value: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct MultipleCursors {
+	pub cursors: HashSet<(Hitbox, Cursor)>,
+	pub center_radius: f64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Cursors {
+	Multiple(MultipleCursors),
+	Single(Cursor),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct RuntimeInteraction<'a> {
+	pub legacy_cursors: Cursors,
+	pub lock_cursors: Cursors,
+	pub legacy_events: Vec<MouseEvent>,
+	pub lock_events: Vec<MouseEvent>,
+	pub legacy_callback: String,
+	pub lock_callback: String,
+	pub can_lock: bool,
+	pub node_to_highlight: Option<(String, Location<'a>)>,
 }
 
 impl<'a> Value<'a> {

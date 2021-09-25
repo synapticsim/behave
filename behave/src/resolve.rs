@@ -7,13 +7,16 @@ use crate::ast::{
 	ASTTree,
 	ASTType,
 	Access,
+	Cursor,
 	EnumAccess,
 	EnumType,
 	FunctionAccess,
 	GlobalAccess,
+	Hitbox,
 	ImportType,
 	InbuiltEnum,
 	InbuiltFunction,
+	InbuiltStruct,
 	ItemType,
 	MouseEvent,
 	Path,
@@ -33,6 +36,26 @@ fn insert_event(h: &mut HashMap<Vec<&'static str>, EnumAccess>, event: MouseEven
 		vec!["MouseEvent", event.to_string()],
 		EnumAccess {
 			id: EnumType::Inbuilt(InbuiltEnum::MouseEvent),
+			value: event as usize,
+		},
+	);
+}
+
+fn insert_cursor(h: &mut HashMap<Vec<&'static str>, EnumAccess>, event: Cursor) {
+	h.insert(
+		vec!["Cursor", event.to_string()],
+		EnumAccess {
+			id: EnumType::Inbuilt(InbuiltEnum::Cursor),
+			value: event as usize,
+		},
+	);
+}
+
+fn insert_hitbox(h: &mut HashMap<Vec<&'static str>, EnumAccess>, event: Hitbox) {
+	h.insert(
+		vec!["Hitbox", event.to_string()],
+		EnumAccess {
+			id: EnumType::Inbuilt(InbuiltEnum::Hitbox),
 			value: event as usize,
 		},
 	);
@@ -66,17 +89,47 @@ lazy_static! {
 		insert_event(&mut h, MouseEvent::WheelUp);
 		insert_event(&mut h, MouseEvent::WheelDown);
 
+		insert_cursor(&mut h, Cursor::None);
+		insert_cursor(&mut h, Cursor::UpArrow);
+		insert_cursor(&mut h, Cursor::DownArrow);
+		insert_cursor(&mut h, Cursor::LeftArrow);
+		insert_cursor(&mut h, Cursor::RightArrow);
+		insert_cursor(&mut h, Cursor::Hand);
+		insert_cursor(&mut h, Cursor::Crosshair);
+		insert_cursor(&mut h, Cursor::Grab);
+		insert_cursor(&mut h, Cursor::GrabOpen);
+		insert_cursor(&mut h, Cursor::TurnLeft);
+		insert_cursor(&mut h, Cursor::TurnRight);
+		insert_cursor(&mut h, Cursor::TurnLeftSmall);
+		insert_cursor(&mut h, Cursor::TurnRightSmall);
+		insert_cursor(&mut h, Cursor::TurnLeftUpsideDown);
+		insert_cursor(&mut h, Cursor::TurnRightUpsideDown);
+		insert_cursor(&mut h, Cursor::UpDownArrows);
+		insert_cursor(&mut h, Cursor::LeftRightArrows);
+		insert_cursor(&mut h, Cursor::DiagonalArrows);
+
+		insert_hitbox(&mut h, Hitbox::Left);
+		insert_hitbox(&mut h, Hitbox::Right);
+		insert_hitbox(&mut h, Hitbox::Up);
+		insert_hitbox(&mut h, Hitbox::Down);
+		insert_hitbox(&mut h, Hitbox::Center);
+
 		h
 	};
 	static ref INBUILT_ENUM_MAP: HashMap<Vec<&'static str>, EnumType> = {
 		let mut h = HashMap::new();
 
 		h.insert(vec!["MouseEvent"], EnumType::Inbuilt(InbuiltEnum::MouseEvent));
+		h.insert(vec!["Cursor"], EnumType::Inbuilt(InbuiltEnum::Cursor));
+		h.insert(vec!["Hitbox"], EnumType::Inbuilt(InbuiltEnum::Hitbox));
 
 		h
 	};
 	static ref INBUILT_STRUCT_MAP: HashMap<Vec<&'static str>, StructType> = {
 		let mut h = HashMap::new();
+
+		h.insert(vec!["Cursors"], StructType::Inbuilt(InbuiltStruct::Cursors));
+
 		h
 	};
 }
@@ -156,7 +209,7 @@ impl<'a> Resolver<'a> {
 										"a type with the same name is already in scope",
 										en.name.1.clone(),
 									)),
-								)
+								);
 						} else {
 							self.types.insert(path.clone(), ResolvedType::Enum(EnumType::User(e)));
 						}
@@ -185,7 +238,7 @@ impl<'a> Resolver<'a> {
 										"a type with the same name is already in scope",
 										st.name.1.clone(),
 									)),
-								)
+								);
 						} else {
 							self.types.insert(path, ResolvedType::Struct(StructType::User(s)));
 						}
@@ -214,14 +267,11 @@ impl<'a> Resolver<'a> {
 						let mut path = path.to_vec();
 						path.push(name.0.clone());
 
-						if let Some(f) = self.functions.get(&path) {
+						if let Some(_) = self.functions.get(&path) {
 							self.diagnostics
-								.push(
-									Diagnostic::new(Level::Error, "function redefinition").add_label(Label::primary(
-										"a function with the same name is already in scope",
-										name.1.clone(),
-									)),
-								)
+								.push(Diagnostic::new(Level::Error, "function redefinition").add_label(
+									Label::primary("a function with the same name is already in scope", name.1.clone()),
+								));
 						} else {
 							self.functions.insert(path, f);
 						}

@@ -32,5 +32,19 @@ template Elevators(id: ElevatorID) {
                 false
             }
         }
+
+        interaction {
+            legacy_cursors: Cursor.Hand,
+            lock_cursors: Cursor.Hand,
+            legacy_events: [MouseEvent.LeftSingle],
+            lock_events: [MouseEvent.LeftSingle],
+            legacy_callback: @{
+                @"L:ElevatorsInvisible, Bool" = !@"L:ElevatorsInvisible, Bool"
+            },
+            lock_callback: @{
+                @"L:ElevatorsInvisible, Bool" = !@"L:ElevatorsInvisible, Bool"
+            },
+            can_lock: false
+        }
     }
 }

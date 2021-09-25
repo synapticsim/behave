@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::convert::Infallible;
 use std::ops::{ControlFlow, FromResidual, Try};
 
+use num_traits::FromPrimitive;
+
 use crate::ast::{
 	Access,
 	Animation,
@@ -14,6 +16,7 @@ use crate::ast::{
 	Call,
 	Component,
 	EnumAccess,
+	EnumType,
 	Expression,
 	ExpressionType,
 	For,
@@ -21,10 +24,13 @@ use crate::ast::{
 	GlobalAccess,
 	Ident,
 	IfChain,
+	InbuiltEnum,
 	InbuiltFunction,
 	InbuiltStruct,
 	Index,
+	Interaction,
 	Location,
+	MouseEvent,
 	Path,
 	ResolvedAccess,
 	ResolvedType,
@@ -44,10 +50,14 @@ use crate::evaluation::rpn::RPNCompiler;
 use crate::evaluation::value::{
 	CallStack,
 	Code,
+	Cursors,
 	FunctionValue,
+	MultipleCursors,
 	Object,
 	RuntimeAnimation,
 	RuntimeComponent,
+	RuntimeEnumType,
+	RuntimeInteraction,
 	RuntimeStructType,
 	RuntimeType,
 	TemplateValue,
@@ -233,6 +243,7 @@ impl<'a> ExpressionEvaluator<'a> {
 					Animation(animation) => self.evaluate_animation(animation)?,
 					Visible(expr) => self.evaluate_visibility(expr.as_ref())?,
 					Emissive(expr) => self.evaluate_emissive(expr.as_ref())?,
+					Interaction(interaction) => self.evaluate_interaction(interaction)?,
 				}
 			},
 			RPNAccess(_) => unreachable!("Cannot evaluate RPN access"),
@@ -578,7 +589,7 @@ impl<'a> ExpressionEvaluator<'a> {
 							Flow::Err(errors)
 						}
 					},
-					StructType::Inbuilt(inbuilt) => self.evaluate_inbuilt_struct(inbuilt, &s.values),
+					StructType::Inbuilt(inbuilt) => self.evaluate_inbuilt_struct(inbuilt, s.ty.1.clone(), &s.values),
 				}
 			} else {
 				Flow::Err(vec![Diagnostic::new(
@@ -592,8 +603,12 @@ impl<'a> ExpressionEvaluator<'a> {
 		}
 	}
 
-	fn evaluate_inbuilt_struct(&mut self, inbuilt: InbuiltStruct, values: &[(Ident<'a>, Expression<'a>)]) -> Flow<'a> {
-		match inbuilt {}
+	fn evaluate_inbuilt_struct(
+		&mut self, inbuilt: InbuiltStruct, loc: Location<'a>, values: &[(Ident<'a>, Expression<'a>)],
+	) -> Flow<'a> {
+		match inbuilt {
+			InbuiltStruct::Cursors => self.evaluate_cursors(loc, values),
+		}
 	}
 
 	fn evaluate_return(&mut self, expr: Option<&Expression<'a>>, loc: Location<'a>) -> Flow<'a> {
@@ -1405,6 +1420,176 @@ impl<'a> ExpressionEvaluator<'a> {
 		}
 	}
 
+	fn evaluate_cursor(&mut self, cursors: &Expression<'a>) -> Result<Cursors, Vec<Diagnostic>> {
+		let legacy_cursors = match self.evaluate_expression(&cursors) {
+			Flow::Ok(value) => value,
+			Flow::Return(loc, _) => {
+				return Err(vec![Diagnostic::new(Level::Error, "unexpected return")
+					.add_label(Label::primary("return expression here `{}`", loc))])
+			},
+			Flow::Break(loc, _) => {
+				return Err(vec![Diagnostic::new(Level::Error, "unexpected break")
+					.add_label(Label::primary("break expression here `{}`", loc))])
+			},
+			Flow::Err(err) => return Err(err),
+		};
+
+		Ok(
+			if let Value::Object(Object {
+				id: RuntimeStructType::Inbuilt(InbuiltStruct::Cursors),
+				fields,
+			}) = legacy_cursors
+			{
+				Cursors::Multiple(MultipleCursors {
+					cursors: if let Value::Map(_, _, vals) = &fields["cursors"] {
+						vals.iter()
+							.map(|val| {
+								(
+									if let Value::Enum(EnumAccess { id: _, value }) = &val.0 {
+										FromPrimitive::from_usize(*value).unwrap()
+									} else {
+										unreachable!()
+									},
+									if let Value::Enum(EnumAccess { id: _, value }) = &val.1 {
+										FromPrimitive::from_usize(*value).unwrap()
+									} else {
+										unreachable!()
+									},
+								)
+							})
+							.collect()
+					} else {
+						unreachable!()
+					},
+					center_radius: if let Value::Number(n) = &fields["center_radius"] {
+						*n
+					} else {
+						unreachable!()
+					},
+				})
+			} else if let Value::Enum(EnumAccess {
+				id: EnumType::Inbuilt(InbuiltEnum::Cursor),
+				value,
+			}) = legacy_cursors
+			{
+				Cursors::Single(FromPrimitive::from_usize(value).unwrap())
+			} else {
+				return Err(vec![Diagnostic::new(Level::Error, "mismatched types")
+					.add_label(Label::primary(
+						format!(
+							"this expression has a result of type `{}`",
+							legacy_cursors.get_type(&self.item_map),
+						),
+						cursors.1.clone(),
+					))
+					.add_note("expected type `Cursors` or `Cursor`")]);
+			},
+		)
+	}
+
+	fn evaluate_events(&mut self, events: &Expression<'a>) -> Result<Vec<MouseEvent>, Vec<Diagnostic>> {
+		let m_events = match self.evaluate_expression(events) {
+			Flow::Ok(value) => value,
+			Flow::Return(loc, _) => {
+				return Err(vec![Diagnostic::new(Level::Error, "unexpected return")
+					.add_label(Label::primary("return expression here `{}`", loc))])
+			},
+			Flow::Break(loc, _) => {
+				return Err(vec![Diagnostic::new(Level::Error, "unexpected break")
+					.add_label(Label::primary("break expression here `{}`", loc))])
+			},
+			Flow::Err(err) => return Err(err),
+		};
+
+		Ok(
+			if let Value::Array(RuntimeType::Enum(RuntimeEnumType::Inbuilt(InbuiltEnum::MouseEvent)), values) = m_events
+			{
+				values
+					.into_iter()
+					.map(|value| {
+						if let Value::Enum(EnumAccess { id: _, value }) = value {
+							FromPrimitive::from_usize(value).unwrap()
+						} else {
+							unreachable!()
+						}
+					})
+					.collect()
+			} else {
+				return Err(vec![Diagnostic::new(Level::Error, "mismatched types")
+					.add_label(Label::primary(
+						format!(
+							"this expression has a result of type `{}`",
+							m_events.get_type(&self.item_map),
+						),
+						events.1.clone(),
+					))
+					.add_note("expected type `[MouseEvent]`")]);
+			},
+		)
+	}
+
+	fn evaluate_interaction(&mut self, interacton: &Interaction<'a>) -> Flow<'a> {
+		if !(self.info.is_in_component && self.info.component_has_node) {
+			Flow::Err(vec![Diagnostic::new(Level::Error, "interaction has no node")
+				.add_label(Label::primary(
+					"this interaction is located outside of a component or in a component without a node",
+					interacton.lock_cursors.1.clone(),
+				))])
+		} else {
+			let legacy_cursors = self.evaluate_cursor(&interacton.legacy_cursors)?;
+			let lock_cursors = self.evaluate_cursor(&interacton.lock_cursors)?;
+			let legacy_events = self.evaluate_events(&interacton.legacy_events)?;
+			let lock_events = self.evaluate_events(&interacton.lock_events)?;
+			let legacy_callback =
+				evaluate!(self, on interacton.legacy_callback.as_ref(), type Code "callback must be of type `code`")?
+					.value;
+			let lock_callback =
+				evaluate!(self, on interacton.lock_callback.as_ref(), type Code "callback must be of type `code`")?
+					.value;
+			let can_lock =
+				evaluate!(self, on interacton.can_lock.as_ref(), type Boolean "can_lock must be of type `bool`")?;
+			let node_to_highlight = if let Some(node) = &interacton.node_to_highlight {
+				Some((
+					{
+						let value = self.evaluate_expression(node.as_ref())?;
+						if let Value::String(s) = value {
+							s
+						} else if let Value::None = value {
+							"__NO_HIGHLIGHT__".to_string()
+						} else {
+							return Flow::Err(vec![Diagnostic::new(
+								Level::Error,
+								"highlight node must be of type `str` or `none`",
+							)
+							.add_label(Label::primary(
+								format!(
+									"this expression has a result of a type `{}`...",
+									value.get_type(&self.item_map)
+								),
+								node.1.clone(),
+							))
+							.add_note("expected type `str` or `none`")]);
+						}
+					},
+					node.1.clone(),
+				))
+			} else {
+				None
+			};
+
+			Flow::Ok(Value::Template(TemplateValue::Interaction(RuntimeInteraction {
+				legacy_cursors,
+				lock_cursors,
+				legacy_callback,
+				lock_callback,
+				legacy_events,
+				lock_events,
+				can_lock,
+				node_to_highlight,
+			})))
+		}
+	}
+
 	fn evaluate_template_block(&mut self, block: &[Statement<'a>]) -> Flow<'a> {
 		self.stack.scope();
 
@@ -1492,6 +1677,75 @@ impl<'a> ExpressionEvaluator<'a> {
 	fn evaluate_while(&mut self, while_loop: &While<'a>) -> Flow<'a> { todo!("For not implemented") }
 
 	fn evaluate_for(&mut self, for_loop: &For<'a>) -> Flow<'a> { todo!("While not implemented") }
+
+	fn evaluate_cursors(&mut self, loc: Location<'a>, values: &[(Ident<'a>, Expression<'a>)]) -> Flow<'a> {
+		let mut obj = Object {
+			id: RuntimeStructType::Inbuilt(InbuiltStruct::Cursors),
+			fields: HashMap::new(),
+		};
+
+		let mut errors = Vec::new();
+
+		for value in values {
+			if value.0 .0 == "cursors" {
+				let cursors = self.evaluate_expression(&value.1)?;
+				if let Value::Map(
+					RuntimeType::Enum(RuntimeEnumType::Inbuilt(InbuiltEnum::Hitbox)),
+					RuntimeType::Enum(RuntimeEnumType::Inbuilt(InbuiltEnum::Cursor)),
+					_,
+				) = cursors
+				{
+					obj.fields.insert("cursors".to_string(), cursors);
+				} else {
+					errors.push(
+						Diagnostic::new(Level::Error, "struct field type mismatch")
+							.add_label(Label::primary(
+								format!("found type `{}`", cursors.get_type(&self.item_map),),
+								value.1 .1.clone(),
+							))
+							.add_note("expected type `[Hitbox : Cursor]`"),
+					);
+				}
+			} else if value.0 .0 == "center_radius" {
+				let radius = self.evaluate_expression(&value.1)?;
+				if let Value::Number(_) = radius {
+					obj.fields.insert("center_radius".to_string(), radius);
+				} else {
+					errors.push(
+						Diagnostic::new(Level::Error, "struct field type mismatch")
+							.add_label(Label::primary(
+								format!("found type `{}`", radius.get_type(&self.item_map),),
+								value.1 .1.clone(),
+							))
+							.add_note("expected type `num`"),
+					);
+				}
+			}
+			{
+				errors.push(Diagnostic::new(Level::Error, "unknown field").add_label(Label::primary(
+					format!("field `{}` does not exist on struct `Cursors`", value.0 .0),
+					value.0 .1.clone(),
+				)))
+			}
+		}
+
+		if !obj.fields.contains_key("cursors") {
+			errors.push(
+				Diagnostic::new(Level::Error, "missing field")
+					.add_label(Label::primary("field `cursors` is missing for struct `Cursors`", loc)),
+			)
+		}
+
+		if !obj.fields.contains_key("center_radius") {
+			obj.fields.insert("center_radius".to_string(), Value::Number(0.0));
+		}
+
+		if errors.len() == 0 {
+			Flow::Ok(Value::Object(obj))
+		} else {
+			Flow::Err(errors)
+		}
+	}
 
 	fn evaluate_format(&mut self, loc: Location<'a>, args: &[Expression<'a>]) -> Flow<'a> {
 		if let Some(arg) = args.get(0) {

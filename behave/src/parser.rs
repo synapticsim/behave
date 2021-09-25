@@ -7,6 +7,7 @@ use crate::ast::{
 	AssignmentTarget,
 	BehaviorExpression,
 	Component,
+	Interaction,
 	Location,
 	OtherType,
 	StructCreate,
@@ -875,7 +876,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 				));
 			}
 		} else {
-			let mut array = Vec::new();
+			let mut array = vec![key];
 			if let Some(tok) = self.peek() {
 				if let TokenType::Comma = tok.0 {
 					self.next();
@@ -1140,36 +1141,114 @@ impl<'a, 'b> Parser<'a, 'b> {
 
 	fn parse_animation(&mut self) -> Result<(Animation<'a>, Range<usize>), Diagnostic> {
 		self.struct_literal_allowed = false;
-		let name = self.parse_expression(ExpressionParseMode::Normal)?;
+		let name = Box::new(self.parse_expression(ExpressionParseMode::Normal)?);
 		self.struct_literal_allowed = true;
 		let args = self.parse_values(ExpressionParseMode::Normal)?;
 		let range = args.1.range;
 		let mut args_iter = args.0.into_iter();
-		let length = if let Some(length) = args_iter.find(|val| val.0 .0 == "length") {
-			length
+		let length = Box::new(if let Some(length) = args_iter.find(|val| val.0 .0 == "length") {
+			length.1
 		} else {
 			return Err(Diagnostic::new(Level::Error, "expected animation length")
 				.add_label(Label::primary("here", self.loc(range))));
-		};
-		let lag = if let Some(lag) = args_iter.find(|val| val.0 .0 == "lag") {
-			lag
+		});
+		let lag = Box::new(if let Some(lag) = args_iter.find(|val| val.0 .0 == "lag") {
+			lag.1
 		} else {
 			return Err(Diagnostic::new(Level::Error, "expected animation lag")
 				.add_label(Label::primary("here", self.loc(range))));
-		};
-		let code = if let Some(code) = args_iter.find(|val| val.0 .0 == "value") {
-			code
+		});
+		let value = Box::new(if let Some(code) = args_iter.find(|val| val.0 .0 == "value") {
+			code.1
 		} else {
 			return Err(Diagnostic::new(Level::Error, "expected animation value")
 				.add_label(Label::primary("here", self.loc(range))));
-		};
+		});
 
 		Ok((
 			Animation {
-				name: Box::new(name),
-				length: Box::new(length.1),
-				lag: Box::new(lag.1),
-				value: Box::new(code.1),
+				name,
+				length,
+				lag,
+				value,
+			},
+			range,
+		))
+	}
+
+	fn parse_interaction(&mut self) -> Result<(Interaction<'a>, Range<usize>), Diagnostic> {
+		let args = self.parse_values(ExpressionParseMode::Normal)?;
+		let range = args.1.range;
+		let mut args_iter = args.0.into_iter();
+		let legacy_cursors = Box::new(
+			if let Some(cursors) = args_iter.find(|val| val.0 .0 == "legacy_cursors") {
+				cursors.1
+			} else {
+				return Err(Diagnostic::new(Level::Error, "expected legacy cursors")
+					.add_label(Label::primary("here", self.loc(range))));
+			},
+		);
+		let lock_cursors = Box::new(
+			if let Some(cursors) = args_iter.find(|val| val.0 .0 == "lock_cursors") {
+				cursors.1
+			} else {
+				return Err(Diagnostic::new(Level::Error, "expected lock cursors")
+					.add_label(Label::primary("here", self.loc(range))));
+			},
+		);
+		let legacy_events = Box::new(
+			if let Some(events) = args_iter.find(|val| val.0 .0 == "legacy_events") {
+				events.1
+			} else {
+				return Err(Diagnostic::new(Level::Error, "expected legacy events")
+					.add_label(Label::primary("here", self.loc(range))));
+			},
+		);
+		let lock_events = Box::new(if let Some(events) = args_iter.find(|val| val.0 .0 == "lock_events") {
+			events.1
+		} else {
+			return Err(Diagnostic::new(Level::Error, "expected lock events")
+				.add_label(Label::primary("here", self.loc(range))));
+		});
+		let legacy_callback = Box::new(
+			if let Some(events) = args_iter.find(|val| val.0 .0 == "legacy_callback") {
+				events.1
+			} else {
+				return Err(Diagnostic::new(Level::Error, "expected legacy callback")
+					.add_label(Label::primary("here", self.loc(range))));
+			},
+		);
+		let lock_callback = Box::new(
+			if let Some(callback) = args_iter.find(|val| val.0 .0 == "lock_callback") {
+				callback.1
+			} else {
+				return Err(Diagnostic::new(Level::Error, "expected lock callback")
+					.add_label(Label::primary("here", self.loc(range))));
+			},
+		);
+		let can_lock = Box::new(if let Some(callback) = args_iter.find(|val| val.0 .0 == "can_lock") {
+			callback.1
+		} else {
+			return Err(
+				Diagnostic::new(Level::Error, "expected can_lock").add_label(Label::primary("here", self.loc(range)))
+			);
+		});
+		let node_to_highlight = if let Some(node) = args_iter.find(|val| val.0 .0 == "node_to_highlight") {
+			Some(Box::new(node.1))
+		} else {
+			None
+		};
+
+		Ok((
+			Interaction {
+				legacy_cursors,
+				lock_cursors,
+				legacy_events,
+				lock_events,
+				legacy_callback,
+				lock_callback,
+				can_lock,
+				node_to_highlight,
 			},
 			range,
 		))
@@ -1272,6 +1351,13 @@ impl<'a, 'b> Parser<'a, 'b> {
 								Ok(Expression(
 									ExpressionType::Behavior(BehaviorExpression::Emissive(expr)),
 									p.loc(range),
+								))
+							},
+							"interaction" => {
+								let interaction = p.parse_interaction()?;
+								Ok(Expression(
+									ExpressionType::Behavior(BehaviorExpression::Interaction(interaction.0)),
+									p.loc(merge_range!(next.1, interaction.1)),
 								))
 							},
 							_ => Err(Diagnostic::new(Level::Error, "expected behavior expression")

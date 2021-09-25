@@ -230,6 +230,7 @@ pub enum BehaviorExpression<'a> {
 	Animation(Animation<'a>),
 	Visible(Box<Expression<'a>>),
 	Emissive(Box<Expression<'a>>),
+	Interaction(Interaction<'a>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -288,22 +289,33 @@ pub enum StructType {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum InbuiltEnum {
 	MouseEvent,
+	Cursor,
+	Hitbox,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum InbuiltStruct {}
+pub enum InbuiltStruct {
+	Cursors,
+}
 
 impl InbuiltEnum {
 	pub fn to_string(self) -> String {
 		match self {
 			InbuiltEnum::MouseEvent => "MouseEvent",
+			InbuiltEnum::Cursor => "Cursor",
+			InbuiltEnum::Hitbox => "Hitbox",
 		}
 		.to_string()
 	}
 }
 
 impl InbuiltStruct {
-	pub fn to_string(self) -> String { match self {}.to_string() }
+	pub fn to_string(self) -> String {
+		match self {
+			InbuiltStruct::Cursors => "Cursors",
+		}
+		.to_string()
+	}
 }
 
 #[derive(Clone, Copy, Debug, FromPrimitive, PartialEq)]
@@ -354,6 +366,76 @@ impl MouseEvent {
 	}
 
 	pub fn from_num(val: usize) -> MouseEvent { FromPrimitive::from_usize(val).unwrap() }
+}
+
+#[derive(Clone, Copy, Debug, Hash, FromPrimitive, PartialEq, Eq)]
+pub enum Cursor {
+	None,
+	UpArrow,
+	DownArrow,
+	LeftArrow,
+	RightArrow,
+	Hand,
+	Crosshair,
+	Grab,
+	GrabOpen,
+	TurnLeft,
+	TurnRight,
+	TurnLeftSmall,
+	TurnRightSmall,
+	TurnLeftUpsideDown,
+	TurnRightUpsideDown,
+	UpDownArrows,
+	LeftRightArrows,
+	DiagonalArrows,
+}
+
+impl Cursor {
+	pub fn to_string(self) -> &'static str {
+		use Cursor::*;
+		match self {
+			None => "None",
+			UpArrow => "UpArrow",
+			DownArrow => "DownArrow",
+			LeftArrow => "LeftArrow",
+			RightArrow => "RightArrow",
+			Hand => "Hand",
+			Crosshair => "Crosshair",
+			Grab => "Grab",
+			GrabOpen => "GrabOpen",
+			TurnLeft => "TurnLeft",
+			TurnRight => "TurnRight",
+			TurnLeftSmall => "TurnLeftSmall",
+			TurnRightSmall => "TurnRightSmall",
+			TurnLeftUpsideDown => "TurnLeftUpside",
+			TurnRightUpsideDown => "TurnRightUpsid",
+			UpDownArrows => "UpDownArrows",
+			LeftRightArrows => "LeftRightArrow",
+			DiagonalArrows => "DiagonalArrows",
+		}
+	}
+}
+
+#[derive(Clone, Copy, Debug, FromPrimitive, PartialEq, Eq, Hash)]
+pub enum Hitbox {
+	Left,
+	Right,
+	Up,
+	Down,
+	Center,
+}
+
+impl Hitbox {
+	pub fn to_string(self) -> &'static str {
+		use Hitbox::*;
+		match self {
+			Left => "Left",
+			Right => "Right",
+			Up => "Up",
+			Down => "Down",
+			Center => "Center",
+		}
+	}
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -451,6 +533,18 @@ pub struct Animation<'a> {
 	pub length: Box<Expression<'a>>,
 	pub lag: Box<Expression<'a>>,
 	pub value: Box<Expression<'a>>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Interaction<'a> {
+	pub legacy_cursors: Box<Expression<'a>>,
+	pub lock_cursors: Box<Expression<'a>>,
+	pub legacy_events: Box<Expression<'a>>,
+	pub lock_events: Box<Expression<'a>>,
+	pub legacy_callback: Box<Expression<'a>>,
+	pub lock_callback: Box<Expression<'a>>,
+	pub can_lock: Box<Expression<'a>>,
+	pub node_to_highlight: Option<Box<Expression<'a>>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -552,6 +646,7 @@ pub trait ASTPass {
 				BehaviorExpression::Animation(ref mut animation) => self.animation(animation),
 				BehaviorExpression::Visible(ref mut visible) => self.expression(&mut visible.0),
 				BehaviorExpression::Emissive(ref mut emissive) => self.expression(&mut emissive.0),
+				BehaviorExpression::Interaction(ref mut interaction) => self.interaction(interaction),
 			},
 		}
 	}
@@ -715,5 +810,19 @@ pub trait ASTPass {
 		self.expression(&mut animation.length.0);
 		self.expression(&mut animation.lag.0);
 		self.expression(&mut animation.value.0);
+	}
+
+	fn interaction(&mut self, interaction: &mut Interaction) {
+		self.expression(&mut interaction.legacy_cursors.0);
+		self.expression(&mut interaction.lock_cursors.0);
+		self.expression(&mut interaction.legacy_events.0);
+		self.expression(&mut interaction.lock_events.0);
+		self.expression(&mut interaction.legacy_callback.0);
+		self.expression(&mut interaction.lock_events.0);
+		self.expression(&mut interaction.can_lock.0);
+		interaction
+			.node_to_highlight
+			.as_mut()
+			.map(|i| self.expression(&mut i.0));
 	}
 }

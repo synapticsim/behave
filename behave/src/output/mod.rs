@@ -6,7 +6,7 @@ use uuid::Uuid;
 use crate::ast::{Behavior, LODs, Location};
 use crate::diagnostic::{Diagnostic, Label, Level};
 use crate::evaluation::runtime::ExpressionEvaluator;
-use crate::evaluation::value::{RuntimeAnimation, RuntimeComponent, TemplateValue};
+use crate::evaluation::value::{Cursors, RuntimeAnimation, RuntimeComponent, RuntimeInteraction, TemplateValue};
 use crate::items::ItemMap;
 use crate::output::xml::XMLWriter;
 
@@ -133,6 +133,7 @@ fn generate_template_values<'a>(
 			TemplateValue::Animation(animation) => generate_animation(animation, gltfs, writer, errors),
 			TemplateValue::Visibility(condition) => generate_visibility(condition, writer),
 			TemplateValue::Emissive(value) => generate_emissive(value, writer),
+			TemplateValue::Interaction(interaction) => generate_interaction(interaction, gltfs, writer, errors),
 			TemplateValue::Block(values) => generate_template_values(values, gltfs, writer, errors),
 		}
 	}
@@ -204,7 +205,7 @@ fn generate_animation(
 						format!("animation `{}` does not exist in LOD", animation.name.0),
 						gltfs[lod].loc.clone(),
 					))
-					.add_label(Label::secondary("node was defined here", animation.name.1.clone())),
+					.add_label(Label::secondary("animation was defined here", animation.name.1.clone())),
 			)
 		}
 	}
@@ -243,14 +244,167 @@ fn generate_visibility(condition: String, writer: &mut XMLWriter) {
 fn generate_emissive(value: String, writer: &mut XMLWriter) {
 	writer.start_element("Materials");
 	writer.start_element("Emissive");
+
 	writer.start_element("Parameter");
 	writer.start_element("Code");
 	writer.data(value);
 	writer.end_element();
 	writer.end_element();
+
 	writer.start_element("OverrideBaseEmissive");
 	writer.data("True");
 	writer.end_element();
+
 	writer.end_element();
+	writer.end_element();
+}
+
+fn generate_interaction(
+	interaction: RuntimeInteraction, gltfs: &[GLTFData], writer: &mut XMLWriter, errors: &mut Vec<Diagnostic>,
+) {
+	writer.start_element("MouseRect");
+
+	writer.start_element("IMCursorsInstances");
+	writer.start_element("IMDefault");
+	match interaction.legacy_cursors {
+		Cursors::Single(cursor) => {
+			writer.start_element("Cursor");
+			writer.data(cursor.to_string());
+			writer.end_element();
+		},
+		Cursors::Multiple(cursors) => {
+			writer.start_element("Cursor");
+			writer.data("Dynamic");
+			writer.end_element();
+
+			for cursor in cursors.cursors {
+				writer.start_element(format!("Cursor{}", cursor.0.to_string()));
+				writer.data(cursor.1.to_string());
+				writer.end_element();
+			}
+
+			writer.start_element("CursorCenterRadius");
+			writer.data(cursors.center_radius.to_string());
+			writer.end_element();
+		},
+	}
+	writer.end_element();
+	writer.start_element("IMDrag");
+	match interaction.lock_cursors {
+		Cursors::Single(cursor) => {
+			writer.start_element("Cursor");
+			writer.data(cursor.to_string());
+			writer.end_element();
+		},
+		Cursors::Multiple(cursors) => {
+			writer.start_element("Cursor");
+			writer.data("Dynamic");
+			writer.end_element();
+
+			for cursor in cursors.cursors {
+				writer.start_element(format!("Cursor{}", cursor.0.to_string()));
+				writer.data(cursor.1.to_string());
+				writer.end_element();
+			}
+
+			writer.start_element("CursorCenterRadius");
+			writer.data(cursors.center_radius.to_string());
+			writer.end_element();
+		},
+	}
+	writer.end_element();
+	writer.end_element();
+
+	writer.start_element("IMMouseFlagsInstances");
+	writer.start_element("IMDefault");
+	writer.data(
+		interaction
+			.legacy_events
+			.into_iter()
+			.map(|e| e.to_string())
+			.collect::<Vec<_>>()
+			.join("+"),
+	);
+	writer.end_element();
+	writer.start_element("IMDrag");
+	writer.data(
+		interaction
+			.lock_events
+			.into_iter()
+			.map(|e| e.to_string())
+			.collect::<Vec<_>>()
+			.join("+"),
+	);
+	writer.end_element();
+	writer.end_element();
+
+	writer.start_element("Lock");
+	writer.data(interaction.can_lock.to_string());
+	writer.end_element();
+
+	writer.start_element("LockFlagsTemporary");
+	writer.data("LeftSingle");
+	writer.end_element();
+
+	if let Some(node) = interaction.node_to_highlight {
+		let mut lods_without = Vec::new();
+		for gltf in gltfs.iter().enumerate() {
+			if !gltf.1.nodes.contains(&node.0) {
+				lods_without.push(gltf.0);
+			}
+		}
+
+		if lods_without.len() == gltfs.len() {
+			errors.push(
+				Diagnostic::new(Level::Error, "node does not exist").add_label(Label::primary(
+					format!("node `{}` does not exist in any LOD", node.0),
+					node.1.clone(),
+				)),
+			)
+		} else {
+			for lod in lods_without {
+				errors.push(
+					Diagnostic::new(Level::Warning, "LOD does not have node")
+						.add_label(Label::primary(
+							format!("node `{}` does not exist in LOD", node.0),
+							gltfs[lod].loc.clone(),
+						))
+						.add_label(Label::secondary("node was referenced here", node.1.clone())),
+				)
+			}
+		}
+
+		writer.start_element("HighlightNodeId");
+		writer.data(node.0);
+		writer.end_element();
+	}
+
+	writer.start_element("CallbackCode");
+
+	writer.start_element("IMCodeInstances");
+	writer.start_element("IMDefault");
+	writer.data(interaction.legacy_callback);
+	writer.end_element();
+	writer.start_element("IMDrag");
+	writer.data(interaction.lock_callback);
+	writer.end_element();
+	writer.end_element();
+
+	writer.start_element("DragMode");
+	writer.data("Default");
+	writer.end_element();
+	writer.start_element("DragAxis");
+	writer.data("Any");
+	writer.end_element();
+	writer.start_element("DragScalar");
+	writer.data("1");
+	writer.end_element();
+
+	writer.start_element("DragFlagsLockable");
+	writer.data("LeftDrag+RightDrag+MiddleDrag");
+	writer.end_element();
+
+	writer.end_element();
+
 	writer.end_element();
 }

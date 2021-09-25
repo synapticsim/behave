@@ -245,6 +245,26 @@ impl<'a, 'b> RPNCompiler<'a, 'b> {
 					EnumType::Inbuilt(i) => Ok(Code {
 						value: match i {
 							InbuiltEnum::MouseEvent => format!("'{}'", MouseEvent::from_num(e.value).to_string()),
+							InbuiltEnum::Cursor => {
+								return Err(vec![Diagnostic::new(
+									Level::Error,
+									"`Cursor` not allowed in this context",
+								)
+								.add_label(Label::primary(
+									"accessed inbuilt type `Cursor` here",
+									access.path.1.clone(),
+								))])
+							},
+							InbuiltEnum::Hitbox => {
+								return Err(vec![Diagnostic::new(
+									Level::Error,
+									"`Hitbox` not allowed in this context",
+								)
+								.add_label(Label::primary(
+									"accessed inbuilt type `Hitbox` here",
+									access.path.1.clone(),
+								))])
+							},
 						},
 						ty: RuntimeType::Enum(RuntimeEnumType::Inbuilt(i)),
 					}),
@@ -279,6 +299,26 @@ impl<'a, 'b> RPNCompiler<'a, 'b> {
 								value: match i {
 									InbuiltEnum::MouseEvent => {
 										format!("'{}'", MouseEvent::from_num(e.value).to_string())
+									},
+									InbuiltEnum::Cursor => {
+										return Err(vec![Diagnostic::new(
+											Level::Error,
+											"`Cursor` not allowed in this context",
+										)
+										.add_label(Label::primary(
+											"accessed inbuilt type `Cursor` here",
+											access.path.1.clone(),
+										))])
+									},
+									InbuiltEnum::Hitbox => {
+										return Err(vec![Diagnostic::new(
+											Level::Error,
+											"`Hitbox` not allowed in this context",
+										)
+										.add_label(Label::primary(
+											"accessed inbuilt type `Hitbox` here",
+											access.path.1.clone(),
+										))])
 									},
 								},
 								ty: RuntimeType::Enum(RuntimeEnumType::Inbuilt(i)),
@@ -659,6 +699,7 @@ impl<'a, 'b> RPNCompiler<'a, 'b> {
 							value: format!("{} {} scmi", lhs.value, rhs.value),
 							ty: RuntimeType::Bool,
 						}),
+						_ => unreachable!(),
 					},
 					RuntimeEnumType::User(..) => Ok(Code {
 						value: format!("{} {} ==", lhs.value, rhs.value),
@@ -690,6 +731,7 @@ impl<'a, 'b> RPNCompiler<'a, 'b> {
 							value: format!("{} {} scmi !", lhs.value, rhs.value),
 							ty: RuntimeType::Bool,
 						}),
+						_ => unreachable!(),
 					},
 					RuntimeEnumType::User(..) => Ok(Code {
 						value: format!("{} {} !=", lhs.value, rhs.value),
@@ -921,6 +963,7 @@ impl<'a, 'b> RPNCompiler<'a, 'b> {
 			if arity == args.len() - 1 {
 				let mut errors = Vec::new();
 				// I hate strings, please don't sue me.
+				let mut values = Vec::new();
 				for expr in args[1..].iter() {
 					let value = self.compile_expr(expr)?;
 					let replace = match value.ty {
@@ -940,12 +983,12 @@ impl<'a, 'b> RPNCompiler<'a, 'b> {
 						},
 					};
 					fmt_string = fmt_string.replacen("{}", &replace, 1);
+					values.push(value);
 				}
 
 				let mut value = String::new();
 
-				for expr in args[1..].iter().rev() {
-					let code = self.compile_expr(expr)?;
+				for code in values.into_iter().rev() {
 					let data = match code.ty {
 						RuntimeType::Str => code.value,
 						RuntimeType::Num => code.value,
