@@ -65,7 +65,7 @@ impl XMLWriter {
 	}
 
 	pub fn element(
-		&mut self, name: impl AsRef<str>, attributes: impl Iterator<Item = (impl AsRef<str>, impl AsRef<str>)>,
+		&mut self, name: impl AsRef<str>, attributes: impl IntoIterator<Item = (impl AsRef<str>, impl AsRef<str>)>,
 	) {
 		self.indent();
 		self.data.push('<');

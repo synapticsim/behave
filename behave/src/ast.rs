@@ -543,6 +543,9 @@ pub struct Interaction<'a> {
 	pub lock_events: Box<Expression<'a>>,
 	pub legacy_callback: Box<Expression<'a>>,
 	pub lock_callback: Box<Expression<'a>>,
+	pub legacy_tooltip: Box<Expression<'a>>,
+	pub lock_tooltip_title: Box<Expression<'a>>,
+	pub lock_tooltips: Box<Expression<'a>>,
 	pub can_lock: Box<Expression<'a>>,
 	pub node_to_highlight: Option<Box<Expression<'a>>>,
 }

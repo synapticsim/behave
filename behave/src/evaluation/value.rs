@@ -267,6 +267,9 @@ pub struct RuntimeInteraction<'a> {
 	pub lock_events: Vec<MouseEvent>,
 	pub legacy_callback: String,
 	pub lock_callback: String,
+	pub legacy_tooltip: String,
+	pub lock_tooltip_title: String,
+	pub lock_tooltips: Vec<String>,
 	pub can_lock: bool,
 	pub node_to_highlight: Option<(String, Location<'a>)>,
 }

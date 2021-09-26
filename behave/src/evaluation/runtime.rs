@@ -1528,27 +1528,66 @@ impl<'a> ExpressionEvaluator<'a> {
 		)
 	}
 
-	fn evaluate_interaction(&mut self, interacton: &Interaction<'a>) -> Flow<'a> {
+	fn evaluate_interaction(&mut self, interaction: &Interaction<'a>) -> Flow<'a> {
 		if !(self.info.is_in_component && self.info.component_has_node) {
 			Flow::Err(vec![Diagnostic::new(Level::Error, "interaction has no node")
 				.add_label(Label::primary(
 					"this interaction is located outside of a component or in a component without a node",
-					interacton.lock_cursors.1.clone(),
+					interaction.lock_cursors.1.clone(),
 				))])
 		} else {
-			let legacy_cursors = self.evaluate_cursor(&interacton.legacy_cursors)?;
-			let lock_cursors = self.evaluate_cursor(&interacton.lock_cursors)?;
-			let legacy_events = self.evaluate_events(&interacton.legacy_events)?;
-			let lock_events = self.evaluate_events(&interacton.lock_events)?;
+			let legacy_cursors = self.evaluate_cursor(&interaction.legacy_cursors)?;
+			let lock_cursors = self.evaluate_cursor(&interaction.lock_cursors)?;
+			let legacy_events = self.evaluate_events(&interaction.legacy_events)?;
+			let lock_events = self.evaluate_events(&interaction.lock_events)?;
 			let legacy_callback =
-				evaluate!(self, on interacton.legacy_callback.as_ref(), type Code "callback must be of type `code`")?
+				evaluate!(self, on interaction.legacy_callback.as_ref(), type Code "callback must be of type `code`")?
 					.value;
 			let lock_callback =
-				evaluate!(self, on interacton.lock_callback.as_ref(), type Code "callback must be of type `code`")?
+				evaluate!(self, on interaction.lock_callback.as_ref(), type Code "callback must be of type `code`")?
 					.value;
+			let legacy_tooltip = evaluate!(self, on interaction.legacy_tooltip.as_ref(), type String "legacy tooltip must be of type `str`")?;
+			let lock_tooltip_title = evaluate!(self, on interaction.lock_tooltip_title.as_ref(), type Code "lock tooltip title must be of type `code`")?.value;
+			let lock_tooltips = {
+				let tooltips = match self.evaluate_expression(&interaction.lock_tooltips) {
+					Flow::Ok(value) => value,
+					Flow::Return(loc, _) => {
+						return Flow::Err(vec![Diagnostic::new(Level::Error, "unexpected return")
+							.add_label(Label::primary("return expression here `{}`", loc))])
+					},
+					Flow::Break(loc, _) => {
+						return Flow::Err(vec![Diagnostic::new(Level::Error, "unexpected break")
+							.add_label(Label::primary("break expression here `{}`", loc))])
+					},
+					err => return err,
+				};
+
+				if let Value::Array(RuntimeType::Str, values) = tooltips {
+					values
+						.into_iter()
+						.map(|value| {
+							if let Value::String(s) = value {
+								s
+							} else {
+								unreachable!()
+							}
+						})
+						.collect()
+				} else {
+					return Flow::Err(vec![Diagnostic::new(Level::Error, "mismatched types")
+						.add_label(Label::primary(
+							format!(
+								"this expression has a result of type `{}`",
+								tooltips.get_type(&self.item_map),
+							),
+							interaction.lock_tooltips.1.clone(),
+						))
+						.add_note("expected type `[MouseEvent]`")]);
+				}
+			};
 			let can_lock =
-				evaluate!(self, on interacton.can_lock.as_ref(), type Boolean "can_lock must be of type `bool`")?;
-			let node_to_highlight = if let Some(node) = &interacton.node_to_highlight {
+				evaluate!(self, on interaction.can_lock.as_ref(), type Boolean "can_lock must be of type `bool`")?;
+			let node_to_highlight = if let Some(node) = &interaction.node_to_highlight {
 				Some((
 					{
 						let value = self.evaluate_expression(node.as_ref())?;
@@ -1584,6 +1623,9 @@ impl<'a> ExpressionEvaluator<'a> {
 				lock_callback,
 				legacy_events,
 				lock_events,
+				legacy_tooltip,
+				lock_tooltip_title,
+				lock_tooltips,
 				can_lock,
 				node_to_highlight,
 			})))

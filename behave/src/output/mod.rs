@@ -338,6 +338,25 @@ fn generate_interaction(
 	writer.end_element();
 	writer.end_element();
 
+	writer.start_element("IMTooltipsInstances");
+	writer.start_element("IMDefault");
+	writer.start_element("TooltipID");
+	writer.data(interaction.legacy_tooltip);
+	writer.end_element();
+	writer.end_element();
+
+	writer.start_element("IMDrag");
+	writer.start_element("TooltipEntries");
+	writer.start_element_attrib("TTTitle", [("RPN", "True")]);
+	writer.data(interaction.lock_tooltip_title);
+	writer.end_element();
+	for tooltip in interaction.lock_tooltips {
+		writer.element("TooltipEntry", [("ID", tooltip)]);
+	}
+	writer.end_element();
+	writer.end_element();
+	writer.end_element();
+
 	writer.start_element("Lock");
 	writer.data(interaction.can_lock.to_string());
 	writer.end_element();

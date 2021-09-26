@@ -1226,6 +1226,30 @@ impl<'a, 'b> Parser<'a, 'b> {
 					.add_label(Label::primary("here", self.loc(range))));
 			},
 		);
+		let legacy_tooltip = Box::new(
+			if let Some(callback) = args_iter.find(|val| val.0 .0 == "legacy_tooltip") {
+				callback.1
+			} else {
+				return Err(Diagnostic::new(Level::Error, "expected legacy tooltip")
+					.add_label(Label::primary("here", self.loc(range))));
+			},
+		);
+		let lock_tooltip_title = Box::new(
+			if let Some(callback) = args_iter.find(|val| val.0 .0 == "lock_tooltip_title") {
+				callback.1
+			} else {
+				return Err(Diagnostic::new(Level::Error, "expected lock tooltip title")
+					.add_label(Label::primary("here", self.loc(range))));
+			},
+		);
+		let lock_tooltips = Box::new(
+			if let Some(callback) = args_iter.find(|val| val.0 .0 == "lock_tooltips") {
+				callback.1
+			} else {
+				return Err(Diagnostic::new(Level::Error, "expected lock tooltips")
+					.add_label(Label::primary("here", self.loc(range))));
+			},
+		);
 		let can_lock = Box::new(if let Some(callback) = args_iter.find(|val| val.0 .0 == "can_lock") {
 			callback.1
 		} else {
@@ -1247,6 +1271,9 @@ impl<'a, 'b> Parser<'a, 'b> {
 				lock_events,
 				legacy_callback,
 				lock_callback,
+				legacy_tooltip,
+				lock_tooltip_title,
+				lock_tooltips,
 				can_lock,
 				node_to_highlight,
 			},
