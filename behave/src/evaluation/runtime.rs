@@ -57,6 +57,7 @@ use crate::evaluation::value::{
 	RuntimeAnimation,
 	RuntimeComponent,
 	RuntimeEnumType,
+	RuntimeEvent,
 	RuntimeInteraction,
 	RuntimeStructType,
 	RuntimeType,
@@ -244,6 +245,7 @@ impl<'a> ExpressionEvaluator<'a> {
 					Visible(expr) => self.evaluate_visibility(expr.as_ref())?,
 					Emissive(expr) => self.evaluate_emissive(expr.as_ref())?,
 					Interaction(interaction) => self.evaluate_interaction(interaction)?,
+					Events(anim, events) => self.evaluate_events(anim.as_ref(), events.as_ref())?,
 				}
 			},
 			RPNAccess(_) => unreachable!("Cannot evaluate RPN access"),
@@ -608,6 +610,7 @@ impl<'a> ExpressionEvaluator<'a> {
 	) -> Flow<'a> {
 		match inbuilt {
 			InbuiltStruct::Cursors => self.evaluate_cursors(loc, values),
+			InbuiltStruct::Event => self.evaluate_event(loc, values),
 		}
 	}
 
@@ -1487,7 +1490,7 @@ impl<'a> ExpressionEvaluator<'a> {
 		)
 	}
 
-	fn evaluate_events(&mut self, events: &Expression<'a>) -> Result<Vec<MouseEvent>, Vec<Diagnostic>> {
+	fn evaluate_mouse_events(&mut self, events: &Expression<'a>) -> Result<Vec<MouseEvent>, Vec<Diagnostic>> {
 		let m_events = match self.evaluate_expression(events) {
 			Flow::Ok(value) => value,
 			Flow::Return(loc, _) => {
@@ -1538,15 +1541,14 @@ impl<'a> ExpressionEvaluator<'a> {
 		} else {
 			let legacy_cursors = self.evaluate_cursor(&interaction.legacy_cursors)?;
 			let lock_cursors = self.evaluate_cursor(&interaction.lock_cursors)?;
-			let legacy_events = self.evaluate_events(&interaction.legacy_events)?;
-			let lock_events = self.evaluate_events(&interaction.lock_events)?;
+			let legacy_events = self.evaluate_mouse_events(&interaction.legacy_events)?;
+			let lock_events = self.evaluate_mouse_events(&interaction.lock_events)?;
 			let legacy_callback =
 				evaluate!(self, on interaction.legacy_callback.as_ref(), type Code "callback must be of type `code`")?
 					.value;
 			let lock_callback =
 				evaluate!(self, on interaction.lock_callback.as_ref(), type Code "callback must be of type `code`")?
 					.value;
-			let legacy_tooltip = evaluate!(self, on interaction.legacy_tooltip.as_ref(), type String "legacy tooltip must be of type `str`")?;
 			let lock_tooltip_title = evaluate!(self, on interaction.lock_tooltip_title.as_ref(), type Code "lock tooltip title must be of type `code`")?.value;
 			let lock_tooltips = {
 				let tooltips = match self.evaluate_expression(&interaction.lock_tooltips) {
@@ -1623,13 +1625,81 @@ impl<'a> ExpressionEvaluator<'a> {
 				lock_callback,
 				legacy_events,
 				lock_events,
-				legacy_tooltip,
 				lock_tooltip_title,
 				lock_tooltips,
 				can_lock,
 				node_to_highlight,
 			})))
 		}
+	}
+
+	fn evaluate_events(&mut self, anim: &Expression<'a>, events: &Expression<'a>) -> Flow<'a> {
+		let anim = (
+			evaluate!(self, on anim, type String "animation name must be of type `str`")?,
+			anim.1.clone(),
+		);
+		let events =
+			if let Value::Array(RuntimeType::Struct(RuntimeStructType::Inbuilt(InbuiltStruct::Event)), values) =
+				self.evaluate_expression(events)?
+			{
+				values
+					.into_iter()
+					.map(|value| {
+						if let Value::Object(Object {
+							id: RuntimeStructType::Inbuilt(InbuiltStruct::Event),
+							fields,
+						}) = value
+						{
+							RuntimeEvent {
+								time: if let Value::Number(n) = fields["time"] {
+									n
+								} else {
+									unreachable!()
+								},
+								direction: if let Value::Enum(EnumAccess { id: _, value }) = fields["direction"] {
+									FromPrimitive::from_usize(value).unwrap()
+								} else {
+									unreachable!()
+								},
+								sounds: if let Value::Array(_, values) = &fields["sounds"] {
+									values
+										.into_iter()
+										.map(|v| {
+											if let Value::String(s) = v {
+												s.clone()
+											} else {
+												unreachable!()
+											}
+										})
+										.collect()
+								} else {
+									unreachable!()
+								},
+								effects: if let Value::Array(_, values) = &fields["effects"] {
+									values
+										.into_iter()
+										.map(|v| {
+											if let Value::String(s) = v {
+												s.clone()
+											} else {
+												unreachable!()
+											}
+										})
+										.collect()
+								} else {
+									unreachable!()
+								},
+							}
+						} else {
+							unreachable!()
+						}
+					})
+					.collect()
+			} else {
+				unreachable!()
+			};
+
+		Flow::Ok(Value::Template(TemplateValue::Events(anim, events)))
 	}
 
 	fn evaluate_template_block(&mut self, block: &[Statement<'a>]) -> Flow<'a> {
@@ -1762,8 +1832,7 @@ impl<'a> ExpressionEvaluator<'a> {
 							.add_note("expected type `num`"),
 					);
 				}
-			}
-			{
+			} else {
 				errors.push(Diagnostic::new(Level::Error, "unknown field").add_label(Label::primary(
 					format!("field `{}` does not exist on struct `Cursors`", value.0 .0),
 					value.0 .1.clone(),
@@ -1780,6 +1849,114 @@ impl<'a> ExpressionEvaluator<'a> {
 
 		if !obj.fields.contains_key("center_radius") {
 			obj.fields.insert("center_radius".to_string(), Value::Number(0.0));
+		}
+
+		if errors.len() == 0 {
+			Flow::Ok(Value::Object(obj))
+		} else {
+			Flow::Err(errors)
+		}
+	}
+
+	fn evaluate_event(&mut self, loc: Location<'a>, values: &[(Ident<'a>, Expression<'a>)]) -> Flow<'a> {
+		let mut obj = Object {
+			id: RuntimeStructType::Inbuilt(InbuiltStruct::Event),
+			fields: HashMap::new(),
+		};
+
+		let mut errors = Vec::new();
+
+		for value in values {
+			if value.0 .0 == "time" {
+				let time = self.evaluate_expression(&value.1)?;
+				if let Value::Number(_) = time {
+					obj.fields.insert("time".to_string(), time);
+				} else {
+					errors.push(
+						Diagnostic::new(Level::Error, "struct field type mismatch")
+							.add_label(Label::primary(
+								format!("found type `{}`", time.get_type(&self.item_map),),
+								value.1 .1.clone(),
+							))
+							.add_note("expected type `num`"),
+					);
+				}
+			} else if value.0 .0 == "direction" {
+				let direction = self.evaluate_expression(&value.1)?;
+				if let Value::Enum(EnumAccess {
+					id: EnumType::Inbuilt(InbuiltEnum::Direction),
+					value: _,
+				}) = direction
+				{
+					obj.fields.insert("direction".to_string(), direction);
+				} else {
+					errors.push(
+						Diagnostic::new(Level::Error, "struct field type mismatch")
+							.add_label(Label::primary(
+								format!("found type `{}`", direction.get_type(&self.item_map),),
+								value.1 .1.clone(),
+							))
+							.add_note("expected type `Direction`"),
+					);
+				}
+			} else if value.0 .0 == "sounds" {
+				let sounds = self.evaluate_expression(&value.1)?;
+				if let Value::Array(RuntimeType::Str, _) = sounds {
+					obj.fields.insert("sounds".to_string(), sounds);
+				} else {
+					errors.push(
+						Diagnostic::new(Level::Error, "struct field type mismatch")
+							.add_label(Label::primary(
+								format!("found type `{}`", sounds.get_type(&self.item_map),),
+								value.1 .1.clone(),
+							))
+							.add_note("expected type `[str]`"),
+					);
+				}
+			} else if value.0 .0 == "effects" {
+				let effects = self.evaluate_expression(&value.1)?;
+				if let Value::Array(RuntimeType::Str, _) = effects {
+					obj.fields.insert("effects".to_string(), effects);
+				} else {
+					errors.push(
+						Diagnostic::new(Level::Error, "struct field type mismatch")
+							.add_label(Label::primary(
+								format!("found type `{}`", effects.get_type(&self.item_map),),
+								value.1 .1.clone(),
+							))
+							.add_note("expected type `[str]`"),
+					);
+				}
+			} else {
+				errors.push(Diagnostic::new(Level::Error, "unknown field").add_label(Label::primary(
+					format!("field `{}` does not exist on struct `Event`", value.0 .0),
+					value.0 .1.clone(),
+				)))
+			}
+		}
+
+		if !obj.fields.contains_key("time") {
+			errors.push(Diagnostic::new(Level::Error, "missing field").add_label(Label::primary(
+				"field `time` is missing for struct `Event`",
+				loc.clone(),
+			)))
+		}
+
+		if !obj.fields.contains_key("direction") {
+			errors.push(
+				Diagnostic::new(Level::Error, "missing field")
+					.add_label(Label::primary("field `direction` is missing for struct `Event`", loc)),
+			)
+		}
+
+		if !obj.fields.contains_key("sounds") {
+			obj.fields
+				.insert("sounds".to_string(), Value::Array(RuntimeType::Str, Vec::new()));
+		}
+
+		if !obj.fields.contains_key("effects") {
+			obj.fields
+				.insert("effects".to_string(), Value::Array(RuntimeType::Str, Vec::new()));
 		}
 
 		if errors.len() == 0 {

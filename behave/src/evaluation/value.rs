@@ -3,6 +3,7 @@ use std::fmt::{Display, Formatter};
 
 use crate::ast::{
 	Cursor,
+	Direction,
 	Enum,
 	EnumAccess,
 	EnumType,
@@ -204,6 +205,37 @@ pub enum Value<'a> {
 	Template(TemplateValue<'a>),
 }
 
+impl<'a> Value<'a> {
+	pub fn get_type(&self, item_map: &'a ItemMap<'a>) -> RuntimeType<'a> {
+		match self {
+			Self::String(_) => RuntimeType::Str,
+			Self::Number(_) => RuntimeType::Num,
+			Self::Boolean(_) => RuntimeType::Bool,
+			Self::Function(f) => match f {
+				FunctionValue::User(f) => RuntimeType::Function(RuntimeFunctionType {
+					args: f
+						.args
+						.iter()
+						.map(|arg| RuntimeType::from(item_map, &arg.ty.0))
+						.collect(),
+					ret: f.ret.as_ref().map(|ret| Box::new(RuntimeType::from(item_map, &ret.0))),
+				}),
+				_ => unreachable!("tried to get type of inbuilt function"),
+			},
+			Self::Object(obj) => RuntimeType::Struct(obj.id.clone()),
+			Self::Enum(access) => match access.id {
+				EnumType::Inbuilt(e) => RuntimeType::Enum(RuntimeEnumType::Inbuilt(e)),
+				EnumType::User(e) => RuntimeType::Enum(RuntimeEnumType::User(e, item_map.get_enum(e))),
+			},
+			Self::Array(ty, _) => RuntimeType::Array(Box::new(ty.clone())),
+			Self::Map(key, value, _) => RuntimeType::Map(Box::new(key.clone()), Box::new(value.clone())),
+			Self::None => RuntimeType::None,
+			Self::Template(_) => RuntimeType::TemplateValue,
+			Self::Code(..) => RuntimeType::Code,
+		}
+	}
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Code<'a> {
 	pub ty: RuntimeType<'a>,
@@ -217,6 +249,7 @@ pub enum TemplateValue<'a> {
 	Visibility(String),
 	Emissive(String),
 	Interaction(RuntimeInteraction<'a>),
+	Events((String, Location<'a>), Vec<RuntimeEvent>),
 	Block(Vec<TemplateValue<'a>>),
 }
 
@@ -267,42 +300,18 @@ pub struct RuntimeInteraction<'a> {
 	pub lock_events: Vec<MouseEvent>,
 	pub legacy_callback: String,
 	pub lock_callback: String,
-	pub legacy_tooltip: String,
 	pub lock_tooltip_title: String,
 	pub lock_tooltips: Vec<String>,
 	pub can_lock: bool,
 	pub node_to_highlight: Option<(String, Location<'a>)>,
 }
 
-impl<'a> Value<'a> {
-	pub fn get_type(&self, item_map: &'a ItemMap<'a>) -> RuntimeType<'a> {
-		match self {
-			Self::String(_) => RuntimeType::Str,
-			Self::Number(_) => RuntimeType::Num,
-			Self::Boolean(_) => RuntimeType::Bool,
-			Self::Function(f) => match f {
-				FunctionValue::User(f) => RuntimeType::Function(RuntimeFunctionType {
-					args: f
-						.args
-						.iter()
-						.map(|arg| RuntimeType::from(item_map, &arg.ty.0))
-						.collect(),
-					ret: f.ret.as_ref().map(|ret| Box::new(RuntimeType::from(item_map, &ret.0))),
-				}),
-				_ => unreachable!("tried to get type of inbuilt function"),
-			},
-			Self::Object(obj) => RuntimeType::Struct(obj.id.clone()),
-			Self::Enum(access) => match access.id {
-				EnumType::Inbuilt(e) => RuntimeType::Enum(RuntimeEnumType::Inbuilt(e)),
-				EnumType::User(e) => RuntimeType::Enum(RuntimeEnumType::User(e, item_map.get_enum(e))),
-			},
-			Self::Array(ty, _) => RuntimeType::Array(Box::new(ty.clone())),
-			Self::Map(key, value, _) => RuntimeType::Map(Box::new(key.clone()), Box::new(value.clone())),
-			Self::None => RuntimeType::None,
-			Self::Template(_) => RuntimeType::TemplateValue,
-			Self::Code(..) => RuntimeType::Code,
-		}
-	}
+#[derive(Clone, Debug, PartialEq)]
+pub struct RuntimeEvent {
+	pub time: f64,
+	pub direction: Direction,
+	pub sounds: Vec<String>,
+	pub effects: Vec<String>,
 }
 
 #[derive(Debug)]

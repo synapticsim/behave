@@ -231,6 +231,7 @@ pub enum BehaviorExpression<'a> {
 	Visible(Box<Expression<'a>>),
 	Emissive(Box<Expression<'a>>),
 	Interaction(Interaction<'a>),
+	Events(Box<Expression<'a>>, Box<Expression<'a>>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -291,11 +292,15 @@ pub enum InbuiltEnum {
 	MouseEvent,
 	Cursor,
 	Hitbox,
+	Direction,
+	Icon,
+	InteractionTip,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum InbuiltStruct {
 	Cursors,
+	Event,
 }
 
 impl InbuiltEnum {
@@ -304,6 +309,9 @@ impl InbuiltEnum {
 			InbuiltEnum::MouseEvent => "MouseEvent",
 			InbuiltEnum::Cursor => "Cursor",
 			InbuiltEnum::Hitbox => "Hitbox",
+			InbuiltEnum::Direction => "Direction",
+			InbuiltEnum::Icon => "Icon",
+			InbuiltEnum::InteractionTip => "Interaction",
 		}
 		.to_string()
 	}
@@ -313,6 +321,7 @@ impl InbuiltStruct {
 	pub fn to_string(self) -> String {
 		match self {
 			InbuiltStruct::Cursors => "Cursors",
+			InbuiltStruct::Event => "Event",
 		}
 		.to_string()
 	}
@@ -438,6 +447,96 @@ impl Hitbox {
 	}
 }
 
+#[derive(Clone, Copy, Debug, FromPrimitive, PartialEq, Eq, Hash)]
+pub enum Direction {
+	Forward,
+	Backward,
+	Both,
+}
+
+impl Direction {
+	pub fn to_string(self) -> &'static str {
+		use Direction::*;
+		match self {
+			Forward => "Forward",
+			Backward => "Backward",
+			Both => "Both",
+		}
+	}
+}
+
+#[derive(Clone, Copy, Debug, FromPrimitive, PartialEq, Eq, Hash)]
+pub enum Icon {
+	MoveX,
+	MoveY,
+	MoveAxis,
+	MoveAxisX,
+	MoveAxisY,
+	Rotate,
+	Push,
+	Pull,
+}
+
+impl Icon {
+	pub fn to_string(self) -> &'static str {
+		use Icon::*;
+		match self {
+			MoveX => "MoveX",
+			MoveY => "MoveY",
+			MoveAxis => "MoveAxis",
+			MoveAxisX => "MoveAxisX",
+			MoveAxisY => "MoveAxisY",
+			Rotate => "Rotate",
+			Push => "Push",
+			Pull => "Pull",
+		}
+	}
+}
+
+#[derive(Clone, Copy, Debug, FromPrimitive, PartialEq, Eq, Hash)]
+pub enum InteractionTip {
+	XAxis,
+	XAxisLeft,
+	XAxisRight,
+	YAxis,
+	YAxisDown,
+	YAxisUp,
+	PrimaryUp,
+	PrimaryDown,
+	SecondaryUp,
+	SecondaryDown,
+	TertiaryUp,
+	TertiaryDown,
+	Lock,
+	Unlock,
+	Increase,
+	Decrease,
+}
+
+impl InteractionTip {
+	pub fn to_string(self) -> &'static str {
+		use InteractionTip::*;
+		match self {
+			XAxis => "XAxis",
+			XAxisLeft => "XAxisLeft",
+			XAxisRight => "XAxisRight",
+			YAxis => "YAxis",
+			YAxisDown => "YAxisDown",
+			YAxisUp => "YAxisUp",
+			PrimaryUp => "PrimaryUp",
+			PrimaryDown => "PrimaryDown",
+			SecondaryUp => "SecondaryUp",
+			SecondaryDown => "SecondaryDown",
+			TertiaryUp => "TertiaryUp",
+			TertiaryDown => "TertiaryDown",
+			Lock => "Lock",
+			Unlock => "Unlock",
+			Increase => "Increase",
+			Decrease => "Decrease",
+		}
+	}
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct EnumAccess {
 	pub id: EnumType,
@@ -543,7 +642,6 @@ pub struct Interaction<'a> {
 	pub lock_events: Box<Expression<'a>>,
 	pub legacy_callback: Box<Expression<'a>>,
 	pub lock_callback: Box<Expression<'a>>,
-	pub legacy_tooltip: Box<Expression<'a>>,
 	pub lock_tooltip_title: Box<Expression<'a>>,
 	pub lock_tooltips: Box<Expression<'a>>,
 	pub can_lock: Box<Expression<'a>>,
@@ -649,6 +747,7 @@ pub trait ASTPass {
 				BehaviorExpression::Animation(ref mut animation) => self.animation(animation),
 				BehaviorExpression::Visible(ref mut visible) => self.expression(&mut visible.0),
 				BehaviorExpression::Emissive(ref mut emissive) => self.expression(&mut emissive.0),
+				BehaviorExpression::Events(ref mut e1, ref mut e2) => self.events((e1.as_mut(), e2.as_mut())),
 				BehaviorExpression::Interaction(ref mut interaction) => self.interaction(interaction),
 			},
 		}
@@ -827,5 +926,10 @@ pub trait ASTPass {
 			.node_to_highlight
 			.as_mut()
 			.map(|i| self.expression(&mut i.0));
+	}
+
+	fn events(&mut self, event: (&mut Expression, &mut Expression)) {
+		self.expression(&mut event.0 .0);
+		self.expression(&mut event.1 .0);
 	}
 }

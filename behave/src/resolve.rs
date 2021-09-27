@@ -8,15 +8,18 @@ use crate::ast::{
 	ASTType,
 	Access,
 	Cursor,
+	Direction,
 	EnumAccess,
 	EnumType,
 	FunctionAccess,
 	GlobalAccess,
 	Hitbox,
+	Icon,
 	ImportType,
 	InbuiltEnum,
 	InbuiltFunction,
 	InbuiltStruct,
+	InteractionTip,
 	ItemType,
 	MouseEvent,
 	Path,
@@ -56,6 +59,36 @@ fn insert_hitbox(h: &mut HashMap<Vec<&'static str>, EnumAccess>, event: Hitbox) 
 		vec!["Hitbox", event.to_string()],
 		EnumAccess {
 			id: EnumType::Inbuilt(InbuiltEnum::Hitbox),
+			value: event as usize,
+		},
+	);
+}
+
+fn insert_direction(h: &mut HashMap<Vec<&'static str>, EnumAccess>, event: Direction) {
+	h.insert(
+		vec!["Direction", event.to_string()],
+		EnumAccess {
+			id: EnumType::Inbuilt(InbuiltEnum::Direction),
+			value: event as usize,
+		},
+	);
+}
+
+fn insert_icon(h: &mut HashMap<Vec<&'static str>, EnumAccess>, event: Icon) {
+	h.insert(
+		vec!["Icon", event.to_string()],
+		EnumAccess {
+			id: EnumType::Inbuilt(InbuiltEnum::Icon),
+			value: event as usize,
+		},
+	);
+}
+
+fn insert_interaction(h: &mut HashMap<Vec<&'static str>, EnumAccess>, event: InteractionTip) {
+	h.insert(
+		vec!["Interaction", event.to_string()],
+		EnumAccess {
+			id: EnumType::Inbuilt(InbuiltEnum::InteractionTip),
 			value: event as usize,
 		},
 	);
@@ -114,6 +147,36 @@ lazy_static! {
 		insert_hitbox(&mut h, Hitbox::Down);
 		insert_hitbox(&mut h, Hitbox::Center);
 
+		insert_direction(&mut h, Direction::Forward);
+		insert_direction(&mut h, Direction::Backward);
+		insert_direction(&mut h, Direction::Both);
+
+		insert_icon(&mut h, Icon::MoveX);
+		insert_icon(&mut h, Icon::MoveY);
+		insert_icon(&mut h, Icon::MoveAxis);
+		insert_icon(&mut h, Icon::MoveAxisX);
+		insert_icon(&mut h, Icon::MoveAxisY);
+		insert_icon(&mut h, Icon::Rotate);
+		insert_icon(&mut h, Icon::Push);
+		insert_icon(&mut h, Icon::Pull);
+
+		insert_interaction(&mut h, InteractionTip::XAxis);
+		insert_interaction(&mut h, InteractionTip::XAxisLeft);
+		insert_interaction(&mut h, InteractionTip::XAxisRight);
+		insert_interaction(&mut h, InteractionTip::YAxis);
+		insert_interaction(&mut h, InteractionTip::YAxisDown);
+		insert_interaction(&mut h, InteractionTip::YAxisUp);
+		insert_interaction(&mut h, InteractionTip::PrimaryUp);
+		insert_interaction(&mut h, InteractionTip::PrimaryDown);
+		insert_interaction(&mut h, InteractionTip::SecondaryUp);
+		insert_interaction(&mut h, InteractionTip::SecondaryDown);
+		insert_interaction(&mut h, InteractionTip::TertiaryUp);
+		insert_interaction(&mut h, InteractionTip::TertiaryDown);
+		insert_interaction(&mut h, InteractionTip::Lock);
+		insert_interaction(&mut h, InteractionTip::Unlock);
+		insert_interaction(&mut h, InteractionTip::Increase);
+		insert_interaction(&mut h, InteractionTip::Decrease);
+
 		h
 	};
 	static ref INBUILT_ENUM_MAP: HashMap<Vec<&'static str>, EnumType> = {
@@ -122,6 +185,9 @@ lazy_static! {
 		h.insert(vec!["MouseEvent"], EnumType::Inbuilt(InbuiltEnum::MouseEvent));
 		h.insert(vec!["Cursor"], EnumType::Inbuilt(InbuiltEnum::Cursor));
 		h.insert(vec!["Hitbox"], EnumType::Inbuilt(InbuiltEnum::Hitbox));
+		h.insert(vec!["Direction"], EnumType::Inbuilt(InbuiltEnum::Direction));
+		h.insert(vec!["Icon"], EnumType::Inbuilt(InbuiltEnum::Icon));
+		h.insert(vec!["Interaction"], EnumType::Inbuilt(InbuiltEnum::InteractionTip));
 
 		h
 	};
@@ -129,6 +195,7 @@ lazy_static! {
 		let mut h = HashMap::new();
 
 		h.insert(vec!["Cursors"], StructType::Inbuilt(InbuiltStruct::Cursors));
+		h.insert(vec!["Event"], StructType::Inbuilt(InbuiltStruct::Event));
 
 		h
 	};

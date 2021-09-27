@@ -44,10 +44,27 @@ template Elevators(id: ElevatorID) {
             lock_callback: @{
                 @"L:ElevatorsInvisible, Bool" = !@"L:ElevatorsInvisible, Bool"
             },
-            legacy_tooltip: "'Interactable Elevators'",
-            lock_tooltip_title: @{ "Interactable Elevators But In Lock Mode" },
+            lock_tooltip_title: @{ "Interactable Elevators" },
             lock_tooltips: ["MyInputEvent"],
             can_lock: false
         }
+
+        events name = [
+            Event {
+                time: 0.1,
+                direction: Direction.Forward,
+                sounds: [
+                    "MySound",
+                    "SomeOtherSound"
+                ]
+            },
+            Event {
+                time: 0.5,
+                direction: Direction.Forward,
+                effects: [
+                    "ElevatorPuffEffect"
+                ]
+            }
+        ]
     }
 }

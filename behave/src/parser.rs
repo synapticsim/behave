@@ -1226,14 +1226,6 @@ impl<'a, 'b> Parser<'a, 'b> {
 					.add_label(Label::primary("here", self.loc(range))));
 			},
 		);
-		let legacy_tooltip = Box::new(
-			if let Some(callback) = args_iter.find(|val| val.0 .0 == "legacy_tooltip") {
-				callback.1
-			} else {
-				return Err(Diagnostic::new(Level::Error, "expected legacy tooltip")
-					.add_label(Label::primary("here", self.loc(range))));
-			},
-		);
 		let lock_tooltip_title = Box::new(
 			if let Some(callback) = args_iter.find(|val| val.0 .0 == "lock_tooltip_title") {
 				callback.1
@@ -1271,7 +1263,6 @@ impl<'a, 'b> Parser<'a, 'b> {
 				lock_events,
 				legacy_callback,
 				lock_callback,
-				legacy_tooltip,
 				lock_tooltip_title,
 				lock_tooltips,
 				can_lock,
@@ -1279,6 +1270,16 @@ impl<'a, 'b> Parser<'a, 'b> {
 			},
 			range,
 		))
+	}
+
+	fn parse_events(&mut self) -> Result<(Box<Expression<'a>>, Box<Expression<'a>>, Range<usize>), Diagnostic> {
+		self.struct_literal_allowed = false;
+		let on = self.parse_with_precedence(precedence::COMPARISON, ExpressionParseMode::Normal)?;
+		self.struct_literal_allowed = true;
+		expect!(self, TokenType::Equal, "expected `=`");
+		let events = self.parse_expression(ExpressionParseMode::Normal)?;
+		let range = merge_range!(&on.1.range, &events.1.range);
+		Ok((Box::new(on), Box::new(events), range))
 	}
 
 	fn parse_path(&mut self) -> Result<Path<'a>, Diagnostic> {
@@ -1385,6 +1386,13 @@ impl<'a, 'b> Parser<'a, 'b> {
 								Ok(Expression(
 									ExpressionType::Behavior(BehaviorExpression::Interaction(interaction.0)),
 									p.loc(merge_range!(next.1, interaction.1)),
+								))
+							},
+							"events" => {
+								let events = p.parse_events()?;
+								Ok(Expression(
+									ExpressionType::Behavior(BehaviorExpression::Events(events.0, events.1)),
+									p.loc(merge_range!(next.1, events.2)),
 								))
 							},
 							_ => Err(Diagnostic::new(Level::Error, "expected behavior expression")

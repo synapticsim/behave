@@ -6,7 +6,14 @@ use uuid::Uuid;
 use crate::ast::{Behavior, LODs, Location};
 use crate::diagnostic::{Diagnostic, Label, Level};
 use crate::evaluation::runtime::ExpressionEvaluator;
-use crate::evaluation::value::{Cursors, RuntimeAnimation, RuntimeComponent, RuntimeInteraction, TemplateValue};
+use crate::evaluation::value::{
+	Cursors,
+	RuntimeAnimation,
+	RuntimeComponent,
+	RuntimeEvent,
+	RuntimeInteraction,
+	TemplateValue,
+};
 use crate::items::ItemMap;
 use crate::output::xml::XMLWriter;
 
@@ -134,6 +141,7 @@ fn generate_template_values<'a>(
 			TemplateValue::Visibility(condition) => generate_visibility(condition, writer),
 			TemplateValue::Emissive(value) => generate_emissive(value, writer),
 			TemplateValue::Interaction(interaction) => generate_interaction(interaction, gltfs, writer, errors),
+			TemplateValue::Events(name, events) => generate_events(name, events, gltfs, writer, errors),
 			TemplateValue::Block(values) => generate_template_values(values, gltfs, writer, errors),
 		}
 	}
@@ -340,8 +348,7 @@ fn generate_interaction(
 
 	writer.start_element("IMTooltipsInstances");
 	writer.start_element("IMDefault");
-	writer.start_element("TooltipID");
-	writer.data(interaction.legacy_tooltip);
+	writer.start_element("Animated");
 	writer.end_element();
 	writer.end_element();
 
@@ -425,5 +432,59 @@ fn generate_interaction(
 
 	writer.end_element();
 
+	writer.end_element();
+}
+
+fn generate_events(
+	name: (String, Location), events: Vec<RuntimeEvent>, gltfs: &[GLTFData], writer: &mut XMLWriter,
+	errors: &mut Vec<Diagnostic>,
+) {
+	let mut lods_without = Vec::new();
+	for gltf in gltfs.iter().enumerate() {
+		if !gltf.1.animations.contains(&name.0) {
+			lods_without.push(gltf.0);
+		}
+	}
+
+	if lods_without.len() == gltfs.len() {
+		errors.push(
+			Diagnostic::new(Level::Error, "animation does not exist").add_label(Label::primary(
+				format!("animation `{}` does not exist in any LOD", name.0),
+				name.1.clone(),
+			)),
+		)
+	} else {
+		for lod in lods_without {
+			errors.push(
+				Diagnostic::new(Level::Warning, "LOD does not have animation")
+					.add_label(Label::primary(
+						format!("animation `{}` does not exist in LOD", name.0),
+						gltfs[lod].loc.clone(),
+					))
+					.add_label(Label::secondary("animation was defined here", name.1.clone())),
+			)
+		}
+	}
+
+	writer.start_element_attrib("AnimationTriggers", [("Animation", name.0)]);
+	for event in events {
+		writer.start_element_attrib(
+			"EventTrigger",
+			[
+				("NormalizedTime", event.time.to_string().as_str()),
+				("Direction", event.direction.to_string()),
+			],
+		);
+
+		for sound in event.sounds {
+			writer.element("SoundEvent", [("WwiseEvent", sound.as_str()), ("Action", "Play")]);
+		}
+
+		for effect in event.effects {
+			writer.element("EffectEvent", [("Name", effect)]);
+		}
+
+		writer.end_element();
+	}
 	writer.end_element();
 }

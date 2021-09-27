@@ -245,25 +245,12 @@ impl<'a, 'b> RPNCompiler<'a, 'b> {
 					EnumType::Inbuilt(i) => Ok(Code {
 						value: match i {
 							InbuiltEnum::MouseEvent => format!("'{}'", MouseEvent::from_num(e.value).to_string()),
-							InbuiltEnum::Cursor => {
+							_ => {
 								return Err(vec![Diagnostic::new(
 									Level::Error,
-									"`Cursor` not allowed in this context",
+									"Inbuilt enum other than `MouseEvent` not allowed in this context",
 								)
-								.add_label(Label::primary(
-									"accessed inbuilt type `Cursor` here",
-									access.path.1.clone(),
-								))])
-							},
-							InbuiltEnum::Hitbox => {
-								return Err(vec![Diagnostic::new(
-									Level::Error,
-									"`Hitbox` not allowed in this context",
-								)
-								.add_label(Label::primary(
-									"accessed inbuilt type `Hitbox` here",
-									access.path.1.clone(),
-								))])
+								.add_label(Label::primary("accessed inbuilt type here", access.path.1.clone()))])
 							},
 						},
 						ty: RuntimeType::Enum(RuntimeEnumType::Inbuilt(i)),
@@ -300,23 +287,13 @@ impl<'a, 'b> RPNCompiler<'a, 'b> {
 									InbuiltEnum::MouseEvent => {
 										format!("'{}'", MouseEvent::from_num(e.value).to_string())
 									},
-									InbuiltEnum::Cursor => {
+									_ => {
 										return Err(vec![Diagnostic::new(
 											Level::Error,
-											"`Cursor` not allowed in this context",
+											"Inbuilt enum other than `MouseEvent` not allowed in this context",
 										)
 										.add_label(Label::primary(
-											"accessed inbuilt type `Cursor` here",
-											access.path.1.clone(),
-										))])
-									},
-									InbuiltEnum::Hitbox => {
-										return Err(vec![Diagnostic::new(
-											Level::Error,
-											"`Hitbox` not allowed in this context",
-										)
-										.add_label(Label::primary(
-											"accessed inbuilt type `Hitbox` here",
+											"accessed inbuilt type here",
 											access.path.1.clone(),
 										))])
 									},
@@ -324,6 +301,7 @@ impl<'a, 'b> RPNCompiler<'a, 'b> {
 								ty: RuntimeType::Enum(RuntimeEnumType::Inbuilt(i)),
 							},
 						},
+						Value::Code(c) => c,
 						_ => {
 							return Err(vec![Diagnostic::new(
 								Level::Error,
@@ -428,7 +406,7 @@ impl<'a, 'b> RPNCompiler<'a, 'b> {
 							};
 							if ty == value.ty {
 								Ok(Code {
-									value: format!("{} (>{})", value.value, rpn),
+									value: format!("{} d (>{})", value.value, rpn),
 									ty,
 								})
 							} else {
