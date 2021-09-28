@@ -249,6 +249,7 @@ impl<'a> ExpressionEvaluator<'a> {
 				}
 			},
 			RPNAccess(_) => unreachable!("Cannot evaluate RPN access"),
+			As(..) => unreachable!("Cannot evaluate as expressions"),
 		})
 	}
 
@@ -1353,7 +1354,7 @@ impl<'a> ExpressionEvaluator<'a> {
 							),
 						);
 						if code.ty == RuntimeType::Bool {
-							d.add_note("you can convert a `bool` to a `num` by multiplying it with a number")
+							d.add_note("you can convert a `bool` to a `num` by casting it (`as num`)")
 						} else {
 							d
 						}
@@ -1413,7 +1414,7 @@ impl<'a> ExpressionEvaluator<'a> {
 							Label::primary(format!("this code results in type `{}`", code.ty), emissive.1.clone()),
 						);
 						if code.ty == RuntimeType::Bool {
-							d.add_note("you can convert a `bool` to a `num` by multiplying it with a number")
+							d.add_note("you can convert a `bool` to a `num` by casting it (`as num`)")
 						} else {
 							d
 						}

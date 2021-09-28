@@ -1720,6 +1720,24 @@ impl<'a, 'b> Parser<'a, 'b> {
 					precedence::ASSIGNMENT,
 				)),
 			}),
+			TokenType::As => Some(&ParseRule {
+				prefix: None,
+				infix: Some((
+					&|p, left, mode| {
+						let ty = p.parse_type()?;
+						let range = merge_range!(left.1.range.clone(), ty.1.range.clone());
+						if mode == ExpressionParseMode::RPNCode {
+							Ok(Expression(ExpressionType::As(Box::new(left), ty), p.loc(range)))
+						} else {
+							Err(
+								Diagnostic::new(Level::Error, "an as expression is not allowed in this context")
+									.add_label(Label::primary("unexpected expression", p.loc(range))),
+							)
+						}
+					},
+					precedence::CALL,
+				)),
+			}),
 			TokenType::If => Some(&ParseRule {
 				prefix: Some(&|p, mode| {
 					let if_tok = next!(p);

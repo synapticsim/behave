@@ -251,6 +251,7 @@ lazy_static! {
 		m.insert("while", TokenType::While);
 		m.insert("for", TokenType::For);
 		m.insert("is", TokenType::Is);
+		m.insert("as", TokenType::As);
 		m.insert("import", TokenType::Import);
 		m.insert("str", TokenType::Str);
 		m.insert("code", TokenType::Code);

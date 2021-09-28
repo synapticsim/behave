@@ -193,6 +193,7 @@ pub enum ExpressionType<'a> {
 	While(While<'a>),
 	For(For<'a>),
 	Is(Box<Expression<'a>>, Type<'a>),
+	As(Box<Expression<'a>>, Type<'a>),
 	Return(Option<Box<Expression<'a>>>),
 	Break(Option<Box<Expression<'a>>>),
 	Behavior(BehaviorExpression<'a>),
@@ -734,6 +735,7 @@ pub trait ASTPass {
 				self.binary(left.as_mut(), op, right.as_mut())
 			},
 			ExpressionType::Is(ref mut expr, ref mut ty) => self.is(expr, ty),
+			ExpressionType::As(ref mut expr, ref mut ty) => self.as_expr(expr, ty),
 			ExpressionType::Call(ref mut call) => self.call(call),
 			ExpressionType::IfChain(ref mut chain) => self.if_chain(chain),
 			ExpressionType::Switch(ref mut switch) => self.switch(switch),
@@ -853,6 +855,11 @@ pub trait ASTPass {
 	}
 
 	fn is(&mut self, expr: &mut Expression, ty: &mut Type) {
+		self.expression(&mut expr.0);
+		self.ty(ty);
+	}
+
+	fn as_expr(&mut self, expr: &mut Expression, ty: &mut Type) {
 		self.expression(&mut expr.0);
 		self.ty(ty);
 	}

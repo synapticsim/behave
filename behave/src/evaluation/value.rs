@@ -44,6 +44,7 @@ pub enum RuntimeType<'a> {
 pub enum RuntimeEnumType<'a> {
 	User(EnumId, &'a Enum<'a>),
 	Inbuilt(InbuiltEnum),
+	Unknown,
 }
 
 #[derive(Clone, Debug)]
@@ -57,6 +58,8 @@ impl<'a> PartialEq for RuntimeEnumType<'a> {
 		match (self, other) {
 			(RuntimeEnumType::User(l, _), RuntimeEnumType::User(r, _)) => l == r,
 			(RuntimeEnumType::Inbuilt(l), RuntimeEnumType::Inbuilt(r)) => l == r,
+			(RuntimeEnumType::Unknown, _) => true,
+			(_, RuntimeEnumType::Unknown) => true,
 			_ => false,
 		}
 	}
@@ -150,6 +153,7 @@ impl Display for RuntimeType<'_> {
 			Self::Enum(e) => match e {
 				RuntimeEnumType::User(_, e) => e.name.0.clone(),
 				RuntimeEnumType::Inbuilt(e) => e.to_string(),
+				RuntimeEnumType::Unknown => "unknown".to_string(),
 			},
 			Self::Array(ty) => format!("[{}]", *ty),
 			Self::Map(from, to) => format!("[{} : {}]", *from, *to),

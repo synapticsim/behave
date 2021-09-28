@@ -19,6 +19,7 @@ use crate::ast::{
 	MouseEvent,
 	ResolvedAccess,
 	StatementType,
+	Type,
 	UnaryOperator,
 };
 use crate::diagnostic::{Diagnostic, Label, Level};
@@ -225,6 +226,7 @@ impl<'a, 'b> RPNCompiler<'a, 'b> {
 			ExpressionType::Binary(left, op, right) => self.compile_binary(*op, left.as_ref(), right.as_ref())?,
 			ExpressionType::Call(call) => self.compile_call(call)?,
 			ExpressionType::IfChain(chain) => self.compile_if(chain)?,
+			ExpressionType::As(expr, ty) => self.compile_as(expr.as_ref(), ty)?,
 			ExpressionType::Switch(_) => todo!("RPN switch not implemented"),
 			ExpressionType::While(_) => todo!("While not implemented"),
 			ExpressionType::For(_) => todo!("For not implemented"),
@@ -395,8 +397,11 @@ impl<'a, 'b> RPNCompiler<'a, 'b> {
 						))]),
 						'A' | 'E' | 'P' => {
 							let ty = if let Some(byte) = rpn.find(',') {
-								if rpn[byte..].to_lowercase().contains("bool") {
+								let lower = rpn[byte..].to_lowercase();
+								if lower.contains("bool") {
 									RuntimeType::Bool
+								} else if lower.contains("enum") {
+									RuntimeType::Enum(RuntimeEnumType::Unknown)
 								} else {
 									RuntimeType::Num
 								}
@@ -423,8 +428,11 @@ impl<'a, 'b> RPNCompiler<'a, 'b> {
 						},
 						'B' | 'G' | 'H' | 'I' | 'K' | 'L' | 'O' | 'R' | 'W' | 'Z' => {
 							let ty = if let Some(byte) = rpn.find(',') {
-								if rpn[byte..].to_lowercase().contains("bool") {
+								let lower = rpn[byte..].to_lowercase();
+								if lower.contains("bool") {
 									RuntimeType::Bool
+								} else if lower.contains("enum") {
+									RuntimeType::Enum(RuntimeEnumType::Unknown)
 								} else {
 									RuntimeType::Num
 								}
@@ -543,7 +551,7 @@ impl<'a, 'b> RPNCompiler<'a, 'b> {
 					))]),
 			},
 			BinaryOperator::Multiply => match (lhs.ty, rhs.ty) {
-				(RuntimeType::Num | RuntimeType::Bool, RuntimeType::Num) => Ok(Code {
+				(RuntimeType::Num, RuntimeType::Num) => Ok(Code {
 					value: format!("{} {} *", lhs.value, rhs.value),
 					ty: RuntimeType::Num,
 				}),
@@ -558,7 +566,7 @@ impl<'a, 'b> RPNCompiler<'a, 'b> {
 					))]),
 			},
 			BinaryOperator::Divide => match (lhs.ty, rhs.ty) {
-				(RuntimeType::Num | RuntimeType::Bool, RuntimeType::Num) => Ok(Code {
+				(RuntimeType::Num, RuntimeType::Num) => Ok(Code {
 					value: format!("{} {} /", lhs.value, rhs.value),
 					ty: RuntimeType::Num,
 				}),
@@ -683,6 +691,10 @@ impl<'a, 'b> RPNCompiler<'a, 'b> {
 						value: format!("{} {} ==", lhs.value, rhs.value),
 						ty: RuntimeType::Bool,
 					}),
+					RuntimeEnumType::Unknown => Err(vec![Diagnostic::new(
+						Level::Error,
+						"cannot compare enum of `unknown` type",
+					)]),
 				},
 				(lhs, rhs) => Err(vec![Diagnostic::new(Level::Error, "cannot equate")
 					.add_label(Label::primary(
@@ -715,6 +727,10 @@ impl<'a, 'b> RPNCompiler<'a, 'b> {
 						value: format!("{} {} !=", lhs.value, rhs.value),
 						ty: RuntimeType::Bool,
 					}),
+					RuntimeEnumType::Unknown => Err(vec![Diagnostic::new(
+						Level::Error,
+						"cannot compare enum of `unknown` type",
+					)]),
 				},
 				(lhs, rhs) => Err(vec![Diagnostic::new(Level::Error, "cannot compare")
 					.add_label(Label::primary(
@@ -765,8 +781,11 @@ impl<'a, 'b> RPNCompiler<'a, 'b> {
 				))]),
 				'A' | 'E' | 'P' => {
 					let ty = if let Some(byte) = rpn.find(',') {
-						if rpn[byte..].to_lowercase().contains("bool") {
+						let lower = rpn[byte..].to_lowercase();
+						if lower.contains("bool") {
 							RuntimeType::Bool
+						} else if lower.contains("enum") {
+							RuntimeType::Enum(RuntimeEnumType::Unknown)
 						} else {
 							RuntimeType::Num
 						}
@@ -781,8 +800,11 @@ impl<'a, 'b> RPNCompiler<'a, 'b> {
 				},
 				'B' | 'G' | 'H' | 'I' | 'K' | 'L' | 'O' | 'R' | 'W' | 'Z' => {
 					let ty = if let Some(byte) = rpn.find(',') {
-						if rpn[byte..].to_lowercase().contains("bool") {
+						let lower = rpn[byte..].to_lowercase();
+						if lower.contains("bool") {
 							RuntimeType::Bool
+						} else if lower.contains("enum") {
+							RuntimeType::Enum(RuntimeEnumType::Unknown)
 						} else {
 							RuntimeType::Num
 						}
@@ -916,6 +938,43 @@ impl<'a, 'b> RPNCompiler<'a, 'b> {
 		} else {
 			Err(errors)
 		}
+	}
+
+	fn compile_as(&mut self, expr: &Expression<'a>, ty: &Type<'a>) -> Result<Code<'a>, Vec<Diagnostic>> {
+		let mut code = self.compile_expr(expr)?;
+		let rt_ty = RuntimeType::from(&self.evaluator.item_map, &ty.0);
+		if rt_ty == code.ty {
+			return Ok(code);
+		}
+		match code.ty {
+			RuntimeType::Enum(RuntimeEnumType::Unknown) => {
+				if let RuntimeType::Enum(_) = rt_ty {
+					code.ty = rt_ty
+				} else {
+					return Err(vec![Diagnostic::new(Level::Error, "invalid cast")
+						.add_label(Label::primary("cannot cast type `unknown enum`...", expr.1.clone()))
+						.add_label(Label::secondary(format!("...to type `{}`", rt_ty), ty.1.clone()))]);
+				}
+			},
+			RuntimeType::Bool => {
+				if rt_ty == RuntimeType::Num {
+					code.ty = rt_ty
+				} else {
+					return Err(vec![Diagnostic::new(Level::Error, "invalid cast")
+						.add_label(Label::primary("cannot cast type `bool`...", expr.1.clone()))
+						.add_label(Label::secondary(format!("...to type `{}`", rt_ty), ty.1.clone()))]);
+				}
+			},
+			_ => {
+				return Err(vec![Diagnostic::new(Level::Error, "invalid cast")
+					.add_label(Label::primary(
+						format!("cannot cast type `{}`...", code.ty),
+						expr.1.clone(),
+					))
+					.add_label(Label::secondary(format!("...to type `{}`", rt_ty), ty.1.clone()))])
+			},
+		};
+		Ok(code)
 	}
 
 	fn compile_return(&mut self, expr: Option<&Expression<'a>>) -> Result<Code<'a>, Vec<Diagnostic>> {
