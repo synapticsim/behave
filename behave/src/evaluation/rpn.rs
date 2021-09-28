@@ -441,7 +441,7 @@ impl<'a, 'b> RPNCompiler<'a, 'b> {
 							};
 							if ty == value.ty {
 								Ok(Code {
-									value: format!("{} (>{})", value.value, rpn),
+									value: format!("{} d (>{})", value.value, rpn),
 									ty,
 								})
 							} else {

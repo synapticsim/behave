@@ -233,6 +233,7 @@ pub enum BehaviorExpression<'a> {
 	Emissive(Box<Expression<'a>>),
 	Interaction(Interaction<'a>),
 	Events(Box<Expression<'a>>, Box<Expression<'a>>),
+	Update(Update<'a>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -296,6 +297,7 @@ pub enum InbuiltEnum {
 	Direction,
 	Icon,
 	InteractionTip,
+	InteractionMode,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -312,7 +314,8 @@ impl InbuiltEnum {
 			InbuiltEnum::Hitbox => "Hitbox",
 			InbuiltEnum::Direction => "Direction",
 			InbuiltEnum::Icon => "Icon",
-			InbuiltEnum::InteractionTip => "Interaction",
+			InbuiltEnum::InteractionTip => "InteractionTip",
+			InbuiltEnum::InteractionMode => "Interaction",
 		}
 		.to_string()
 	}
@@ -538,6 +541,24 @@ impl InteractionTip {
 	}
 }
 
+#[derive(Clone, Copy, Debug, FromPrimitive, PartialEq, Eq, Hash)]
+pub enum InteractionMode {
+	Legacy,
+	Lock,
+	Both,
+}
+
+impl InteractionMode {
+	pub fn to_string(self) -> &'static str {
+		use InteractionMode::*;
+		match self {
+			Legacy => "Legacy",
+			Lock => "Lock",
+			Both => "Both",
+		}
+	}
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct EnumAccess {
 	pub id: EnumType,
@@ -650,6 +671,13 @@ pub struct Interaction<'a> {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct Update<'a> {
+	pub frequency: Option<Box<Expression<'a>>>,
+	pub mode: Box<Expression<'a>>,
+	pub code: Box<Expression<'a>>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub enum StatementType<'a> {
 	Expression(ExpressionType<'a>),
 	Declaration(Variable<'a>),
@@ -751,6 +779,7 @@ pub trait ASTPass {
 				BehaviorExpression::Emissive(ref mut emissive) => self.expression(&mut emissive.0),
 				BehaviorExpression::Events(ref mut e1, ref mut e2) => self.events((e1.as_mut(), e2.as_mut())),
 				BehaviorExpression::Interaction(ref mut interaction) => self.interaction(interaction),
+				BehaviorExpression::Update(ref mut update) => self.update(update),
 			},
 		}
 	}
@@ -933,6 +962,12 @@ pub trait ASTPass {
 			.node_to_highlight
 			.as_mut()
 			.map(|i| self.expression(&mut i.0));
+	}
+
+	fn update(&mut self, update: &mut Update) {
+		update.frequency.as_mut().map(|f| self.expression(&mut f.0));
+		self.expression(&mut update.mode.0);
+		self.expression(&mut update.code.0);
 	}
 
 	fn events(&mut self, event: (&mut Expression, &mut Expression)) {

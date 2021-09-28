@@ -42,6 +42,7 @@ use crate::ast::{
 	Type,
 	TypeType,
 	UnaryOperator,
+	Update,
 	Use,
 	While,
 };
@@ -61,6 +62,7 @@ use crate::evaluation::value::{
 	RuntimeInteraction,
 	RuntimeStructType,
 	RuntimeType,
+	RuntimeUpdate,
 	TemplateValue,
 	Value,
 };
@@ -246,6 +248,7 @@ impl<'a> ExpressionEvaluator<'a> {
 					Emissive(expr) => self.evaluate_emissive(expr.as_ref())?,
 					Interaction(interaction) => self.evaluate_interaction(interaction)?,
 					Events(anim, events) => self.evaluate_events(anim.as_ref(), events.as_ref())?,
+					Update(update) => self.evaluate_update(update)?,
 				}
 			},
 			RPNAccess(_) => unreachable!("Cannot evaluate RPN access"),
@@ -1701,6 +1704,41 @@ impl<'a> ExpressionEvaluator<'a> {
 			};
 
 		Flow::Ok(Value::Template(TemplateValue::Events(anim, events)))
+	}
+
+	fn evaluate_update(&mut self, update: &Update<'a>) -> Flow<'a> {
+		let frequency = if let Some(expr) = &update.frequency {
+			Some(evaluate!(self, on expr, type Number "update frequency must be a number")?)
+		} else {
+			None
+		};
+		let value = self.evaluate_expression(&update.mode)?;
+		let mode = if let Value::Enum(EnumAccess {
+			id: EnumType::Inbuilt(InbuiltEnum::InteractionMode),
+			value,
+		}) = value
+		{
+			FromPrimitive::from_usize(value).unwrap()
+		} else {
+			return Flow::Err(vec![Diagnostic::new(
+				Level::Error,
+				"update mode must be of type `Interaction`",
+			)
+			.add_label(Label::primary(
+				format!(
+					"this expression has a result of type `{}`",
+					value.get_type(&self.item_map)
+				),
+				update.mode.1.clone(),
+			))]);
+		};
+		let code = evaluate!(self, on update.code.as_ref(), type Code "update code must be an RPN code")?.value;
+
+		Flow::Ok(Value::Template(TemplateValue::Update(RuntimeUpdate {
+			frequency,
+			mode,
+			code,
+		})))
 	}
 
 	fn evaluate_template_block(&mut self, block: &[Statement<'a>]) -> Flow<'a> {

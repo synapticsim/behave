@@ -19,6 +19,7 @@ use crate::ast::{
 	InbuiltEnum,
 	InbuiltFunction,
 	InbuiltStruct,
+	InteractionMode,
 	InteractionTip,
 	ItemType,
 	MouseEvent,
@@ -84,11 +85,21 @@ fn insert_icon(h: &mut HashMap<Vec<&'static str>, EnumAccess>, event: Icon) {
 	);
 }
 
-fn insert_interaction(h: &mut HashMap<Vec<&'static str>, EnumAccess>, event: InteractionTip) {
+fn insert_interaction_tip(h: &mut HashMap<Vec<&'static str>, EnumAccess>, event: InteractionTip) {
+	h.insert(
+		vec!["InteractionTip", event.to_string()],
+		EnumAccess {
+			id: EnumType::Inbuilt(InbuiltEnum::InteractionTip),
+			value: event as usize,
+		},
+	);
+}
+
+fn insert_interaction(h: &mut HashMap<Vec<&'static str>, EnumAccess>, event: InteractionMode) {
 	h.insert(
 		vec!["Interaction", event.to_string()],
 		EnumAccess {
-			id: EnumType::Inbuilt(InbuiltEnum::InteractionTip),
+			id: EnumType::Inbuilt(InbuiltEnum::InteractionMode),
 			value: event as usize,
 		},
 	);
@@ -160,22 +171,26 @@ lazy_static! {
 		insert_icon(&mut h, Icon::Push);
 		insert_icon(&mut h, Icon::Pull);
 
-		insert_interaction(&mut h, InteractionTip::XAxis);
-		insert_interaction(&mut h, InteractionTip::XAxisLeft);
-		insert_interaction(&mut h, InteractionTip::XAxisRight);
-		insert_interaction(&mut h, InteractionTip::YAxis);
-		insert_interaction(&mut h, InteractionTip::YAxisDown);
-		insert_interaction(&mut h, InteractionTip::YAxisUp);
-		insert_interaction(&mut h, InteractionTip::PrimaryUp);
-		insert_interaction(&mut h, InteractionTip::PrimaryDown);
-		insert_interaction(&mut h, InteractionTip::SecondaryUp);
-		insert_interaction(&mut h, InteractionTip::SecondaryDown);
-		insert_interaction(&mut h, InteractionTip::TertiaryUp);
-		insert_interaction(&mut h, InteractionTip::TertiaryDown);
-		insert_interaction(&mut h, InteractionTip::Lock);
-		insert_interaction(&mut h, InteractionTip::Unlock);
-		insert_interaction(&mut h, InteractionTip::Increase);
-		insert_interaction(&mut h, InteractionTip::Decrease);
+		insert_interaction_tip(&mut h, InteractionTip::XAxis);
+		insert_interaction_tip(&mut h, InteractionTip::XAxisLeft);
+		insert_interaction_tip(&mut h, InteractionTip::XAxisRight);
+		insert_interaction_tip(&mut h, InteractionTip::YAxis);
+		insert_interaction_tip(&mut h, InteractionTip::YAxisDown);
+		insert_interaction_tip(&mut h, InteractionTip::YAxisUp);
+		insert_interaction_tip(&mut h, InteractionTip::PrimaryUp);
+		insert_interaction_tip(&mut h, InteractionTip::PrimaryDown);
+		insert_interaction_tip(&mut h, InteractionTip::SecondaryUp);
+		insert_interaction_tip(&mut h, InteractionTip::SecondaryDown);
+		insert_interaction_tip(&mut h, InteractionTip::TertiaryUp);
+		insert_interaction_tip(&mut h, InteractionTip::TertiaryDown);
+		insert_interaction_tip(&mut h, InteractionTip::Lock);
+		insert_interaction_tip(&mut h, InteractionTip::Unlock);
+		insert_interaction_tip(&mut h, InteractionTip::Increase);
+		insert_interaction_tip(&mut h, InteractionTip::Decrease);
+
+		insert_interaction(&mut h, InteractionMode::Both);
+		insert_interaction(&mut h, InteractionMode::Lock);
+		insert_interaction(&mut h, InteractionMode::Legacy);
 
 		h
 	};
@@ -187,7 +202,8 @@ lazy_static! {
 		h.insert(vec!["Hitbox"], EnumType::Inbuilt(InbuiltEnum::Hitbox));
 		h.insert(vec!["Direction"], EnumType::Inbuilt(InbuiltEnum::Direction));
 		h.insert(vec!["Icon"], EnumType::Inbuilt(InbuiltEnum::Icon));
-		h.insert(vec!["Interaction"], EnumType::Inbuilt(InbuiltEnum::InteractionTip));
+		h.insert(vec!["InteractionTip"], EnumType::Inbuilt(InbuiltEnum::InteractionTip));
+		h.insert(vec!["Interaction"], EnumType::Inbuilt(InbuiltEnum::InteractionMode));
 
 		h
 	};

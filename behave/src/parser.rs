@@ -11,6 +11,7 @@ use crate::ast::{
 	Location,
 	OtherType,
 	StructCreate,
+	Update,
 	UseTarget,
 };
 use crate::items::ItemMap;
@@ -1145,21 +1146,23 @@ impl<'a, 'b> Parser<'a, 'b> {
 		self.struct_literal_allowed = true;
 		let args = self.parse_values(ExpressionParseMode::Normal)?;
 		let range = args.1.range;
-		let mut args_iter = args.0.into_iter();
-		let length = Box::new(if let Some(length) = args_iter.find(|val| val.0 .0 == "length") {
-			length.1
-		} else {
-			return Err(Diagnostic::new(Level::Error, "expected animation length")
-				.add_label(Label::primary("here", self.loc(range))));
-		});
-		let lag = Box::new(if let Some(lag) = args_iter.find(|val| val.0 .0 == "lag") {
-			lag.1
+		let args_iter = args.0.iter();
+		let length = Box::new(
+			if let Some(length) = args_iter.clone().find(|val| val.0 .0 == "length") {
+				length.1.clone()
+			} else {
+				return Err(Diagnostic::new(Level::Error, "expected animation length")
+					.add_label(Label::primary("here", self.loc(range))));
+			},
+		);
+		let lag = Box::new(if let Some(lag) = args_iter.clone().find(|val| val.0 .0 == "lag") {
+			lag.1.clone()
 		} else {
 			return Err(Diagnostic::new(Level::Error, "expected animation lag")
 				.add_label(Label::primary("here", self.loc(range))));
 		});
-		let value = Box::new(if let Some(code) = args_iter.find(|val| val.0 .0 == "value") {
-			code.1
+		let value = Box::new(if let Some(code) = args_iter.clone().find(|val| val.0 .0 == "value") {
+			code.1.clone()
 		} else {
 			return Err(Diagnostic::new(Level::Error, "expected animation value")
 				.add_label(Label::primary("here", self.loc(range))));
@@ -1179,78 +1182,81 @@ impl<'a, 'b> Parser<'a, 'b> {
 	fn parse_interaction(&mut self) -> Result<(Interaction<'a>, Range<usize>), Diagnostic> {
 		let args = self.parse_values(ExpressionParseMode::Normal)?;
 		let range = args.1.range;
-		let mut args_iter = args.0.into_iter();
+		let args_iter = args.0.iter();
 		let legacy_cursors = Box::new(
-			if let Some(cursors) = args_iter.find(|val| val.0 .0 == "legacy_cursors") {
-				cursors.1
+			if let Some(cursors) = args_iter.clone().find(|val| val.0 .0 == "legacy_cursors") {
+				cursors.1.clone()
 			} else {
 				return Err(Diagnostic::new(Level::Error, "expected legacy cursors")
 					.add_label(Label::primary("here", self.loc(range))));
 			},
 		);
 		let lock_cursors = Box::new(
-			if let Some(cursors) = args_iter.find(|val| val.0 .0 == "lock_cursors") {
-				cursors.1
+			if let Some(cursors) = args_iter.clone().find(|val| val.0 .0 == "lock_cursors") {
+				cursors.1.clone()
 			} else {
 				return Err(Diagnostic::new(Level::Error, "expected lock cursors")
 					.add_label(Label::primary("here", self.loc(range))));
 			},
 		);
 		let legacy_events = Box::new(
-			if let Some(events) = args_iter.find(|val| val.0 .0 == "legacy_events") {
-				events.1
+			if let Some(events) = args_iter.clone().find(|val| val.0 .0 == "legacy_events") {
+				events.1.clone()
 			} else {
 				return Err(Diagnostic::new(Level::Error, "expected legacy events")
 					.add_label(Label::primary("here", self.loc(range))));
 			},
 		);
-		let lock_events = Box::new(if let Some(events) = args_iter.find(|val| val.0 .0 == "lock_events") {
-			events.1
-		} else {
-			return Err(Diagnostic::new(Level::Error, "expected lock events")
-				.add_label(Label::primary("here", self.loc(range))));
-		});
+		let lock_events = Box::new(
+			if let Some(events) = args_iter.clone().find(|val| val.0 .0 == "lock_events") {
+				events.1.clone()
+			} else {
+				return Err(Diagnostic::new(Level::Error, "expected lock events")
+					.add_label(Label::primary("here", self.loc(range))));
+			},
+		);
 		let legacy_callback = Box::new(
-			if let Some(events) = args_iter.find(|val| val.0 .0 == "legacy_callback") {
-				events.1
+			if let Some(events) = args_iter.clone().find(|val| val.0 .0 == "legacy_callback") {
+				events.1.clone()
 			} else {
 				return Err(Diagnostic::new(Level::Error, "expected legacy callback")
 					.add_label(Label::primary("here", self.loc(range))));
 			},
 		);
 		let lock_callback = Box::new(
-			if let Some(callback) = args_iter.find(|val| val.0 .0 == "lock_callback") {
-				callback.1
+			if let Some(callback) = args_iter.clone().find(|val| val.0 .0 == "lock_callback") {
+				callback.1.clone()
 			} else {
 				return Err(Diagnostic::new(Level::Error, "expected lock callback")
 					.add_label(Label::primary("here", self.loc(range))));
 			},
 		);
 		let lock_tooltip_title = Box::new(
-			if let Some(callback) = args_iter.find(|val| val.0 .0 == "lock_tooltip_title") {
-				callback.1
+			if let Some(callback) = args_iter.clone().find(|val| val.0 .0 == "lock_tooltip_title") {
+				callback.1.clone()
 			} else {
 				return Err(Diagnostic::new(Level::Error, "expected lock tooltip title")
 					.add_label(Label::primary("here", self.loc(range))));
 			},
 		);
 		let lock_tooltips = Box::new(
-			if let Some(callback) = args_iter.find(|val| val.0 .0 == "lock_tooltips") {
-				callback.1
+			if let Some(callback) = args_iter.clone().find(|val| val.0 .0 == "lock_tooltips") {
+				callback.1.clone()
 			} else {
 				return Err(Diagnostic::new(Level::Error, "expected lock tooltips")
 					.add_label(Label::primary("here", self.loc(range))));
 			},
 		);
-		let can_lock = Box::new(if let Some(callback) = args_iter.find(|val| val.0 .0 == "can_lock") {
-			callback.1
-		} else {
-			return Err(
-				Diagnostic::new(Level::Error, "expected can_lock").add_label(Label::primary("here", self.loc(range)))
-			);
-		});
-		let node_to_highlight = if let Some(node) = args_iter.find(|val| val.0 .0 == "node_to_highlight") {
-			Some(Box::new(node.1))
+		let can_lock = Box::new(
+			if let Some(callback) = args_iter.clone().find(|val| val.0 .0 == "can_lock") {
+				callback.1.clone()
+			} else {
+				return Err(Diagnostic::new(Level::Error, "expected can_lock")
+					.add_label(Label::primary("here", self.loc(range))));
+			},
+		);
+		let node_to_highlight = if let Some(node) = args_iter.clone().find(|val| val.0 .0 == "node_to_highlight") {
+			Some(Box::new(node.1.clone()))
 		} else {
 			None
 		};
@@ -1280,6 +1286,31 @@ impl<'a, 'b> Parser<'a, 'b> {
 		let events = self.parse_expression(ExpressionParseMode::Normal)?;
 		let range = merge_range!(&on.1.range, &events.1.range);
 		Ok((Box::new(on), Box::new(events), range))
+	}
+
+	fn parse_update(&mut self) -> Result<(Update<'a>, Range<usize>), Diagnostic> {
+		let args = self.parse_values(ExpressionParseMode::Normal)?;
+		let range = args.1.range;
+		let args_iter = args.0.iter();
+		let frequency = if let Some(frequency) = args_iter.clone().find(|val| val.0 .0 == "frequency") {
+			Some(Box::new(frequency.1.clone()))
+		} else {
+			None
+		};
+		let mode = Box::new(if let Some(mode) = args_iter.clone().find(|val| val.0 .0 == "mode") {
+			mode.1.clone()
+		} else {
+			return Err(Diagnostic::new(Level::Error, "expected update interaction mode")
+				.add_label(Label::primary("here", self.loc(range))));
+		});
+		let code = Box::new(if let Some(code) = args_iter.clone().find(|val| val.0 .0 == "do") {
+			code.1.clone()
+		} else {
+			return Err(Diagnostic::new(Level::Error, "expected update code")
+				.add_label(Label::primary("here", self.loc(range))));
+		});
+
+		Ok((Update { frequency, mode, code }, range))
 	}
 
 	fn parse_path(&mut self) -> Result<Path<'a>, Diagnostic> {
@@ -1393,6 +1424,13 @@ impl<'a, 'b> Parser<'a, 'b> {
 								Ok(Expression(
 									ExpressionType::Behavior(BehaviorExpression::Events(events.0, events.1)),
 									p.loc(merge_range!(next.1, events.2)),
+								))
+							},
+							"update" => {
+								let update = p.parse_update()?;
+								Ok(Expression(
+									ExpressionType::Behavior(BehaviorExpression::Update(update.0)),
+									p.loc(merge_range!(next.1, update.1)),
 								))
 							},
 							_ => Err(Diagnostic::new(Level::Error, "expected behavior expression")

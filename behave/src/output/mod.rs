@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use gltf::json::Root;
 use uuid::Uuid;
 
-use crate::ast::{Behavior, LODs, Location};
+use crate::ast::{Behavior, InteractionMode, LODs, Location};
 use crate::diagnostic::{Diagnostic, Label, Level};
 use crate::evaluation::runtime::ExpressionEvaluator;
 use crate::evaluation::value::{
@@ -12,6 +12,7 @@ use crate::evaluation::value::{
 	RuntimeComponent,
 	RuntimeEvent,
 	RuntimeInteraction,
+	RuntimeUpdate,
 	TemplateValue,
 };
 use crate::items::ItemMap;
@@ -142,6 +143,7 @@ fn generate_template_values<'a>(
 			TemplateValue::Emissive(value) => generate_emissive(value, writer),
 			TemplateValue::Interaction(interaction) => generate_interaction(interaction, gltfs, writer, errors),
 			TemplateValue::Events(name, events) => generate_events(name, events, gltfs, writer, errors),
+			TemplateValue::Update(update) => generate_update(update, writer),
 			TemplateValue::Block(values) => generate_template_values(values, gltfs, writer, errors),
 		}
 	}
@@ -486,5 +488,28 @@ fn generate_events(
 
 		writer.end_element();
 	}
+	writer.end_element();
+}
+
+fn generate_update(update: RuntimeUpdate, writer: &mut XMLWriter) {
+	writer.start_element_attrib(
+		"Update",
+		[
+			match update.frequency {
+				Some(f) => ("Frequency", f.to_string()),
+				None => ("Once", "True".to_string()),
+			},
+			(
+				"InteractionMode",
+				match update.mode {
+					InteractionMode::Legacy => "Default",
+					InteractionMode::Lock => "Drag",
+					InteractionMode::Both => "All",
+				}
+				.to_string(),
+			),
+		],
+	);
+	writer.data(update.code);
 	writer.end_element();
 }

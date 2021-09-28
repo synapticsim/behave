@@ -14,6 +14,7 @@ use crate::ast::{
 	InbuiltEnum,
 	InbuiltFunction,
 	InbuiltStruct,
+	InteractionMode,
 	Location,
 	MouseEvent,
 	ResolvedType,
@@ -255,6 +256,7 @@ pub enum TemplateValue<'a> {
 	Interaction(RuntimeInteraction<'a>),
 	Events((String, Location<'a>), Vec<RuntimeEvent>),
 	Block(Vec<TemplateValue<'a>>),
+	Update(RuntimeUpdate),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -282,6 +284,13 @@ pub struct RuntimeAnimation<'a> {
 	pub length: f64,
 	pub lag: f64,
 	pub value: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct RuntimeUpdate {
+	pub frequency: Option<f64>,
+	pub mode: InteractionMode,
+	pub code: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]

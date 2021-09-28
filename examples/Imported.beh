@@ -66,5 +66,13 @@ template Elevators(id: ElevatorID) {
                 ]
             }
         ]
+
+        update {
+            mode: Interaction.Both,
+            frequency: 0.1,
+            do: @{
+                @"L:ThisIsAlwaysZero" = 1;
+            }
+        }
     }
 }
