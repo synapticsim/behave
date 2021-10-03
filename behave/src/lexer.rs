@@ -1,3 +1,4 @@
+use std::ops::Range;
 use std::{
 	collections::HashMap,
 	iter::{FusedIterator, Peekable},
@@ -6,30 +7,33 @@ use std::{
 
 use lazy_static::lazy_static;
 
+use crate::ast::Location;
 use crate::{
 	diagnostic::{Diagnostic, Label, Level},
 	token::{Token, TokenType},
 };
 
 pub struct Lexer<'a> {
-	file: &'a str,
+	file: &'a [String],
 	source: Peekable<CharIndices<'a>>,
 	source_raw: &'a str,
 }
 
 impl<'a> Lexer<'a> {
-	pub fn new(file: &'a str, source: &'a str) -> Self {
+	pub fn new(file: &'a [String], source: &'a str) -> Self {
 		Self {
 			file,
 			source: source.char_indices().peekable(),
 			source_raw: source,
 		}
 	}
+
+	fn loc(&self, range: Range<usize>) -> Location<'a> { Location { file: self.file, range } }
 }
 
 impl Lexer<'_> {}
 
-impl Iterator for &mut Lexer<'_> {
+impl Iterator for Lexer<'_> {
 	type Item = Token;
 
 	fn next(&mut self) -> Option<Self::Item> {
@@ -42,10 +46,13 @@ impl Iterator for &mut Lexer<'_> {
 			')' => Token(TokenType::RightParen, c.0..c.0 + 1),
 			'{' => Token(TokenType::LeftBrace, c.0..c.0 + 1),
 			'}' => Token(TokenType::RightBrace, c.0..c.0 + 1),
+			'[' => Token(TokenType::LeftBracket, c.0..c.0 + 1),
+			']' => Token(TokenType::RightBracket, c.0..c.0 + 1),
 			',' => Token(TokenType::Comma, c.0..c.0 + 1),
 			'.' => Token(TokenType::Period, c.0..c.0 + 1),
 			':' => Token(TokenType::Colon, c.0..c.0 + 1),
 			';' => Token(TokenType::Semicolon, c.0..c.0 + 1),
+			'|' => Token(TokenType::Pipe, c.0..c.0 + 1),
 			'+' => {
 				if self.source.peek().map(|c| c.1 == '=').unwrap_or(false) {
 					self.source.next();
@@ -146,15 +153,10 @@ impl Iterator for &mut Lexer<'_> {
 							TokenType::Diagnostic(
 								Diagnostic::new(Level::Error, "string does not terminate")
 									.add_label(Label::primary(
-										self.file,
 										"the string starts here",
-										start_byte_index..start_byte_index + 1,
+										self.loc(start_byte_index..start_byte_index + 1),
 									))
-									.add_label(Label::secondary(
-										self.file,
-										"but there is a newline here",
-										c.0..c.0 + 1,
-									)),
+									.add_label(Label::secondary("but there is a newline here", self.loc(c.0..c.0 + 1))),
 							),
 							c.0..c.0,
 						));
@@ -169,9 +171,8 @@ impl Iterator for &mut Lexer<'_> {
 				Token(
 					TokenType::Diagnostic(Diagnostic::new(Level::Error, "string does not terminate").add_label(
 						Label::primary(
-							self.file,
 							"the string starts here",
-							start_byte_index..start_byte_index + 1,
+							self.loc(start_byte_index..start_byte_index + 1),
 						),
 					)),
 					c.0..c.0,
@@ -198,7 +199,7 @@ impl Iterator for &mut Lexer<'_> {
 					Err(err) => Token(
 						TokenType::Diagnostic(
 							Diagnostic::new(Level::Error, format!("failed to parse number: {}", err))
-								.add_label(Label::primary(self.file, "", start_byte_index..end_byte_index + 1)),
+								.add_label(Label::primary("", self.loc(start_byte_index..end_byte_index + 1))),
 						),
 						c.0..c.0,
 					),
@@ -219,16 +220,17 @@ impl Iterator for &mut Lexer<'_> {
 				let ident = &self.source_raw[start_byte_index..end_byte_index];
 				match KEYWORDS.get(ident) {
 					Some(token) => Token(token.clone(), start_byte_index..end_byte_index),
-					None => Token(TokenType::Ident(ident.to_string()), start_byte_index..end_byte_index),
+					None => match ident {
+						"true" => Token(TokenType::Boolean(true), start_byte_index..end_byte_index),
+						"false" => Token(TokenType::Boolean(false), start_byte_index..end_byte_index),
+						_ => Token(TokenType::Ident(ident.to_string()), start_byte_index..end_byte_index),
+					},
 				}
 			},
 			_ => Token(
 				TokenType::Diagnostic(
-					Diagnostic::new(Level::Error, "unexpected character").add_label(Label::primary(
-						self.file,
-						"",
-						c.0..c.0 + 1,
-					)),
+					Diagnostic::new(Level::Error, "unexpected character")
+						.add_label(Label::primary("", self.loc(c.0..c.0 + 1))),
 				),
 				c.0..c.0,
 			),
@@ -248,14 +250,9 @@ lazy_static! {
 		m.insert("else", TokenType::Else);
 		m.insert("while", TokenType::While);
 		m.insert("for", TokenType::For);
-		m.insert("in", TokenType::In);
-		m.insert("component", TokenType::Component);
-		m.insert("on", TokenType::On);
-		m.insert("extern", TokenType::Extern);
+		m.insert("is", TokenType::Is);
+		m.insert("as", TokenType::As);
 		m.insert("import", TokenType::Import);
-		m.insert("lods", TokenType::Lods);
-		m.insert("behavior", TokenType::Behavior);
-		m.insert("template", TokenType::Template);
 		m.insert("str", TokenType::Str);
 		m.insert("code", TokenType::Code);
 		m.insert("num", TokenType::Num);
@@ -263,16 +260,16 @@ lazy_static! {
 		m.insert("struct", TokenType::Struct);
 		m.insert("enum", TokenType::Enum);
 		m.insert("fn", TokenType::Function);
-		m.insert("animation", TokenType::Animation);
-		m.insert("use", TokenType::Use);
 		m.insert("return", TokenType::Return);
 		m.insert("break", TokenType::Break);
 		m.insert("switch", TokenType::Switch);
 		m.insert("let", TokenType::Let);
-		m.insert("alias", TokenType::Alias);
-		m.insert("true", TokenType::True);
-		m.insert("false", TokenType::False);
 		m.insert("none", TokenType::None);
+		m.insert("lods", TokenType::Lods);
+		m.insert("behavior", TokenType::Behavior);
+		m.insert("template", TokenType::Template);
+		m.insert("use", TokenType::Use);
+		m.insert("extern", TokenType::Extern);
 		m
 	};
 }

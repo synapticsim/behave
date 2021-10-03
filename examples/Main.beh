@@ -1,0 +1,16 @@
+import Imported;
+
+lods {
+    0 -> "SomeModel.gltf",
+    50 -> "SomeModel2.gltf"
+}
+
+behavior {
+    use Elevators {
+        id: ElevatorID.Left
+    }
+
+    use Elevators {
+        id: ElevatorID.Right
+    }
+}

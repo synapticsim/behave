@@ -1,5 +1,6 @@
 use std::ops::Range;
 
+use crate::ast::Location;
 use crate::token::Token;
 
 /// The type of a label.
@@ -19,36 +20,36 @@ pub struct Label {
 	/// The message associated with the label.
 	pub message: String,
 	/// The file that the label belongs to.
-	pub file: String,
+	pub file: Vec<String>,
 	/// The byte-range of the label.
 	pub range: Range<usize>,
 }
 
 impl Label {
-	pub fn primary(file: impl ToString, message: impl ToString, range: Range<usize>) -> Self {
+	pub fn primary(message: impl ToString, loc: Location) -> Self {
 		Label {
 			label_type: LabelType::Primary,
 			message: message.to_string(),
-			file: file.to_string(),
-			range,
+			file: loc.file.to_vec().into_iter().map(|s| s.to_string()).collect(),
+			range: loc.range,
 		}
 	}
 
-	pub fn unexpected(file: impl ToString, token: &Token) -> Self {
-		Label {
-			label_type: LabelType::Primary,
-			message: format!("found `{}`", token.to_type()),
-			file: file.to_string(),
-			range: token.1.clone(),
-		}
-	}
-
-	pub fn secondary(file: impl ToString, message: impl ToString, range: Range<usize>) -> Self {
+	pub fn secondary(message: impl ToString, loc: Location) -> Self {
 		Label {
 			label_type: LabelType::Secondary,
 			message: message.to_string(),
-			file: file.to_string(),
-			range,
+			file: loc.file.to_vec().into_iter().map(|s| s.to_string()).collect(),
+			range: loc.range,
+		}
+	}
+
+	pub fn unexpected(file: &[impl ToString + Clone], token: &Token) -> Self {
+		Label {
+			label_type: LabelType::Primary,
+			message: format!("found `{}`", token.to_type()),
+			file: file.to_vec().into_iter().map(|s| s.to_string()).collect(),
+			range: token.1.clone(),
 		}
 	}
 }

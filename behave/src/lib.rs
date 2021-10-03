@@ -1,16 +1,21 @@
-use std::{collections::HashMap, io::Error};
+#![feature(try_trait_v2)]
 
-use ast::{ImportType, AST};
-use diagnostic::{Diagnostic, Level};
+use diagnostic::Diagnostic;
 use lexer::Lexer;
 use parser::{Parser, ParserMode};
 
-use crate::diagnostic::Label;
+use crate::ast::{ASTTree, ASTType, AST};
+use crate::diagnostic::Level;
+use crate::items::ItemMap;
 
 mod ast;
 pub mod diagnostic;
+mod evaluation;
+mod items;
 mod lexer;
+mod output;
 mod parser;
+mod resolve;
 mod token;
 
 /// The result of a compilation.
@@ -21,91 +26,113 @@ pub struct CompileResult {
 	pub diagnostics: Vec<Diagnostic>,
 }
 
-/// Compile a `behave` file.
+#[derive(Debug)]
+/// A `behave` source file.
+pub struct SourceFile {
+	/// The path of the source file.
+	pub path: Vec<String>,
+	/// The contents of the source file.
+	pub contents: String,
+}
+
+/// Compile a `behave` project.
 ///
 /// # Parameters:
-/// `source_name`: The name of the source file.
-/// `source`: The contents of the source file.
-/// `import_resolver`: The resolver of imported files. It receives the import path, and should return the contents of
-/// the imported file.
-pub fn compile<F>(source_name: impl AsRef<str>, source: impl AsRef<str>, mut import_resolver: F) -> CompileResult
+/// `main_file`: The main file of the project.
+/// `files`: Slice of all the other files in the project.
+/// `loader`: File loader that loads files in the output directory for GLTF verification.
+pub fn compile<F>(main_file: &SourceFile, files: &[SourceFile], loader: F) -> CompileResult
 where
-	F: FnMut(&str) -> Result<String, (String, Error)>,
+	F: FnMut(&str) -> Option<String>,
 {
 	let mut diagnostics = Vec::new();
-	let mut asts = HashMap::new();
 
-	recursive_parse(
-		source_name,
-		source,
-		ParserMode::MainFile,
-		&mut import_resolver,
-		&mut asts,
-		&mut diagnostics,
-	);
+	let mut item_map = ItemMap::new();
+	let (mut main, mut others) = if let Ok(asts) = parse(main_file, files, &mut item_map, &mut diagnostics) {
+		asts
+	} else {
+		return CompileResult {
+			compiled: None,
+			diagnostics,
+		};
+	};
+
+	if let Err(diag) = resolve::resolve(&mut main, &mut others, &mut item_map) {
+		diagnostics.extend(diag);
+		return CompileResult {
+			compiled: None,
+			diagnostics,
+		};
+	}
+
+	let (lods, behavior) = if let ASTType::Main(lods, behavior) = main.ast_data {
+		(lods, behavior)
+	} else {
+		unreachable!()
+	};
+
+	let s = match output::generate(loader, &item_map, lods, behavior) {
+		Ok(s) => Some(s),
+		Err(err) => {
+			diagnostics.extend(err);
+			None
+		},
+	};
 
 	CompileResult {
-		compiled: None,
+		compiled: s,
 		diagnostics,
 	}
 }
 
-fn recursive_parse<F>(
-	source_name: impl AsRef<str>, source: impl AsRef<str>, mode: ParserMode, import_resolver: &mut F,
-	asts: &mut HashMap<String, AST>, diagnostics: &mut Vec<Diagnostic>,
-) -> bool
-where
-	F: FnMut(&str) -> Result<String, (String, Error)>,
-{
-	let mut lexer = Lexer::new(source_name.as_ref(), source.as_ref());
+fn parse<'a>(
+	main_file: &'a SourceFile, files: &'a [SourceFile], item_map: &mut ItemMap<'a>, diagnostics: &mut Vec<Diagnostic>,
+) -> Result<(AST<'a>, ASTTree<'a>), ()> {
+	let main = match Parser::new(
+		ParserMode::MainFile,
+		&main_file.path,
+		Lexer::new(&main_file.path, &main_file.contents),
+		item_map,
+		diagnostics,
+	)
+	.parse()
+	{
+		Some(ast) => ast,
+		None => return Err(()),
+	};
 
-	if !asts.contains_key(source_name.as_ref()) {
-		if let Some(ast) = Parser::new(mode, source_name.as_ref(), &mut lexer, diagnostics).parse() {
-			for import in &ast.imports {
-				if let ImportType::Normal(path) = &import.0 {
-					let path_string = {
-						let mut s = String::new();
-						let mut iter = path.0.iter().map(|i| &i.0);
-						s += iter.next().unwrap();
-						while let Some(p) = iter.next() {
-							s += ".";
-							s += p;
-						}
-
-						s
-					};
-
-					match import_resolver(&path_string) {
-						Ok(source) => {
-							if !recursive_parse(
-								&path_string,
-								source,
-								ParserMode::ImportedFile,
-								import_resolver,
-								asts,
-								diagnostics,
-							) {
-								return false;
-							}
-						},
-						Err(err) => {
-							diagnostics.push(
-								Diagnostic::new(Level::Error, format!("failed to import file `{}`: {}", err.0, err.1))
-									.add_label(Label::primary(source_name.as_ref(), "imported here", path.1.clone())),
-							);
-							return false;
-						},
+	let mut tree = ASTTree::new();
+	for file in files {
+		if !tree.add_ast(
+			&file.path,
+			match Parser::new(
+				ParserMode::ImportedFile,
+				&file.path,
+				Lexer::new(&file.path, &file.contents),
+				item_map,
+				diagnostics,
+			)
+			.parse()
+			{
+				Some(ast) => ast,
+				None => return Err(()),
+			},
+		) {
+			diagnostics.push(Diagnostic::new(
+				Level::Error,
+				format!("file '{}' is invalid", {
+					let mut s = String::new();
+					let mut iter = file.path.iter();
+					s += &iter.next().unwrap();
+					while let Some(p) = iter.next() {
+						s.push('.');
+						s += &p;
 					}
-				}
-			}
-
-			asts.insert(source_name.as_ref().to_string(), ast);
-
-			true
-		} else {
-			false
+					s
+				}),
+			))
 		}
-	} else {
-		true
 	}
+
+	Ok((main, tree))
 }
