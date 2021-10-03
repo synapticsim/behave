@@ -327,7 +327,14 @@ impl<'a, 'b> RPNCompiler<'a, 'b> {
 				};
 
 				if access.path.0.len() == 1 {
-					if let Some(value) = self.stack.var(&access.path.0[0]) {
+					if access.path.0[0].0.as_bytes()[0] as char == 'p'
+						&& access.path.0[0].0[1..].parse::<usize>().is_ok()
+					{
+						Ok(Code {
+							value: access.path.0[0].0.clone(),
+							ty: RuntimeType::Num,
+						})
+					} else if let Some(value) = self.stack.var(&access.path.0[0]) {
 						Ok(Code {
 							value: format!("l{}", value.register),
 							ty: value.ty,

@@ -44,9 +44,15 @@ template Elevators(id: ElevatorID) {
             lock_callback: @{
                 @"L:ElevatorsInvisible, Bool" = !@"L:ElevatorsInvisible, Bool"
             },
-            lock_tooltip_title: @{ "Interactable Elevators" },
+            tooltip_title: @{ "Interactable Elevators" },
             lock_tooltips: ["MyInputEvent"],
-            can_lock: false
+            animated_tooltips: [none],
+            can_lock: false,
+            cursor_animated: false,
+            drag_mode: NormalDrag {
+                axis: Axis.Any,
+                scalar: 1.0
+            }
         }
 
         events name = [
@@ -71,7 +77,43 @@ template Elevators(id: ElevatorID) {
             mode: Interaction.Both,
             frequency: 0.1,
             do: @{
-                @"L:ThisIsAlwaysZero" = 1;
+                @"L:ThisIsAlwaysZero" = 0;
+            }
+        }
+
+        inputevent "MyInputEvent" {
+            legacy_icon: Icon.Push,
+            lock_icon: Icon.Push,
+            description: @{ "This is my Input Event" },
+            tooltip_value: @{
+                if @"O:InputEventValue, Bool" { "On" } else { "Off" }
+            },
+            legacy_interaction: [InteractionTip.PrimaryDown],
+            lock_interaction: @{
+                "This is a custom interaction message"
+            },
+            value: @{ @"O:InputEventValue, Bool" },
+            units: "Bool",
+            init: @{ @"O:InputEventValue, Bool" = false },
+            watch: ["A:SomeSimVar", "L:SomeLocalVar"],
+            inc: Setter {
+                set: @{ @"B:MyInputEvent_Set" = @"B:MyInputEvent" + p0 },
+                bindings: [Binding {
+                    alias: "MyInputEvent_IncrementByOne",
+                    param: @{ 1 }
+                }]
+            },
+            dec: Setter {
+
+                set: @{ @"B:MyInputEvent_Set" = @"B:MyInputEvent" - p0 },
+                bindings: [Binding {
+                    alias: "MyInputEvent_DecrementByOne",
+                    param: @{ 1 }
+                }]
+            },
+            set: Setter {
+                set: @{ @"O:InputEventValue" = p0 },
+                bindings: [none]
             }
         }
     }

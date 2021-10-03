@@ -7,6 +7,7 @@ use crate::ast::{
 	ASTTree,
 	ASTType,
 	Access,
+	Axis,
 	Cursor,
 	Direction,
 	EnumAccess,
@@ -105,6 +106,16 @@ fn insert_interaction(h: &mut HashMap<Vec<&'static str>, EnumAccess>, event: Int
 	);
 }
 
+fn insert_axis(h: &mut HashMap<Vec<&'static str>, EnumAccess>, event: Axis) {
+	h.insert(
+		vec!["Axis", event.to_string()],
+		EnumAccess {
+			id: EnumType::Inbuilt(InbuiltEnum::Axis),
+			value: event as usize,
+		},
+	);
+}
+
 lazy_static! {
 	static ref INBUILT_FUNCTION_MAP: HashMap<Vec<&'static str>, InbuiltFunction> = {
 		let mut h = HashMap::new();
@@ -192,6 +203,10 @@ lazy_static! {
 		insert_interaction(&mut h, InteractionMode::Lock);
 		insert_interaction(&mut h, InteractionMode::Legacy);
 
+		insert_axis(&mut h, Axis::X);
+		insert_axis(&mut h, Axis::Y);
+		insert_axis(&mut h, Axis::Any);
+
 		h
 	};
 	static ref INBUILT_ENUM_MAP: HashMap<Vec<&'static str>, EnumType> = {
@@ -204,6 +219,7 @@ lazy_static! {
 		h.insert(vec!["Icon"], EnumType::Inbuilt(InbuiltEnum::Icon));
 		h.insert(vec!["InteractionTip"], EnumType::Inbuilt(InbuiltEnum::InteractionTip));
 		h.insert(vec!["Interaction"], EnumType::Inbuilt(InbuiltEnum::InteractionMode));
+		h.insert(vec!["Axis"], EnumType::Inbuilt(InbuiltEnum::Axis));
 
 		h
 	};
@@ -212,6 +228,14 @@ lazy_static! {
 
 		h.insert(vec!["Cursors"], StructType::Inbuilt(InbuiltStruct::Cursors));
 		h.insert(vec!["Event"], StructType::Inbuilt(InbuiltStruct::Event));
+		h.insert(vec!["AnimTooltip"], StructType::Inbuilt(InbuiltStruct::AnimTooltip));
+		h.insert(vec!["NormalDrag"], StructType::Inbuilt(InbuiltStruct::NormalDrag));
+		h.insert(
+			vec!["TrajectoryDrag"],
+			StructType::Inbuilt(InbuiltStruct::TrajectoryDrag),
+		);
+		h.insert(vec!["Setter"], StructType::Inbuilt(InbuiltStruct::Setter));
+		h.insert(vec!["Binding"], StructType::Inbuilt(InbuiltStruct::Binding));
 
 		h
 	};

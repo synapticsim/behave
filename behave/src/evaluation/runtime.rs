@@ -28,6 +28,7 @@ use crate::ast::{
 	InbuiltFunction,
 	InbuiltStruct,
 	Index,
+	InputEvent,
 	Interaction,
 	Location,
 	MouseEvent,
@@ -49,22 +50,32 @@ use crate::ast::{
 use crate::diagnostic::{Diagnostic, Label, Level};
 use crate::evaluation::rpn::RPNCompiler;
 use crate::evaluation::value::{
+	AnimTooltip,
+	BindTarget,
+	Binding,
 	CallStack,
 	Code,
 	Cursors,
+	DragMode,
 	FunctionValue,
+	InteractionType,
 	MultipleCursors,
+	NormalDrag,
 	Object,
 	RuntimeAnimation,
 	RuntimeComponent,
 	RuntimeEnumType,
 	RuntimeEvent,
+	RuntimeInputEvent,
 	RuntimeInteraction,
 	RuntimeStructType,
 	RuntimeType,
 	RuntimeUpdate,
+	Setter,
 	TemplateValue,
+	TrajectoryDrag,
 	Value,
+	WatchedVariable,
 };
 use crate::items::ItemMap;
 
@@ -249,6 +260,7 @@ impl<'a> ExpressionEvaluator<'a> {
 					Interaction(interaction) => self.evaluate_interaction(interaction)?,
 					Events(anim, events) => self.evaluate_events(anim.as_ref(), events.as_ref())?,
 					Update(update) => self.evaluate_update(update)?,
+					InputEvent(event) => self.evaluate_input_event(event)?,
 				}
 			},
 			RPNAccess(_) => unreachable!("Cannot evaluate RPN access"),
@@ -615,6 +627,11 @@ impl<'a> ExpressionEvaluator<'a> {
 		match inbuilt {
 			InbuiltStruct::Cursors => self.evaluate_cursors(loc, values),
 			InbuiltStruct::Event => self.evaluate_event(loc, values),
+			InbuiltStruct::AnimTooltip => self.evaluate_anim_tooltip(loc, values),
+			InbuiltStruct::NormalDrag => self.evaluate_normal_drag(loc, values),
+			InbuiltStruct::TrajectoryDrag => self.evaluate_trajectory_drag(loc, values),
+			InbuiltStruct::Setter => self.evaluate_setter(loc, values),
+			InbuiltStruct::Binding => self.evaluate_binding(loc, values),
 		}
 	}
 
@@ -1508,31 +1525,32 @@ impl<'a> ExpressionEvaluator<'a> {
 			Flow::Err(err) => return Err(err),
 		};
 
-		Ok(
-			if let Value::Array(RuntimeType::Enum(RuntimeEnumType::Inbuilt(InbuiltEnum::MouseEvent)), values) = m_events
-			{
-				values
-					.into_iter()
-					.map(|value| {
-						if let Value::Enum(EnumAccess { id: _, value }) = value {
-							FromPrimitive::from_usize(value).unwrap()
-						} else {
-							unreachable!()
-						}
-					})
-					.collect()
-			} else {
-				return Err(vec![Diagnostic::new(Level::Error, "mismatched types")
-					.add_label(Label::primary(
-						format!(
-							"this expression has a result of type `{}`",
-							m_events.get_type(&self.item_map),
-						),
-						events.1.clone(),
-					))
-					.add_note("expected type `[MouseEvent]`")]);
-			},
-		)
+		Ok(if let Value::Array(RuntimeType::None, _) = m_events {
+			Vec::new()
+		} else if let Value::Array(RuntimeType::Enum(RuntimeEnumType::Inbuilt(InbuiltEnum::MouseEvent)), values) =
+			m_events
+		{
+			values
+				.into_iter()
+				.map(|value| {
+					if let Value::Enum(EnumAccess { id: _, value }) = value {
+						FromPrimitive::from_usize(value).unwrap()
+					} else {
+						unreachable!()
+					}
+				})
+				.collect()
+		} else {
+			return Err(vec![Diagnostic::new(Level::Error, "mismatched types")
+				.add_label(Label::primary(
+					format!(
+						"this expression has a result of type `{}`",
+						m_events.get_type(&self.item_map),
+					),
+					events.1.clone(),
+				))
+				.add_note("expected type `[MouseEvent]`")]);
+		})
 	}
 
 	fn evaluate_interaction(&mut self, interaction: &Interaction<'a>) -> Flow<'a> {
@@ -1553,7 +1571,7 @@ impl<'a> ExpressionEvaluator<'a> {
 			let lock_callback =
 				evaluate!(self, on interaction.lock_callback.as_ref(), type Code "callback must be of type `code`")?
 					.value;
-			let lock_tooltip_title = evaluate!(self, on interaction.lock_tooltip_title.as_ref(), type Code "lock tooltip title must be of type `code`")?.value;
+			let lock_tooltip_title = evaluate!(self, on interaction.lock_tooltip_title.as_ref(), type Code "tooltip title must be of type `code`")?.value;
 			let lock_tooltips = {
 				let tooltips = match self.evaluate_expression(&interaction.lock_tooltips) {
 					Flow::Ok(value) => value,
@@ -1568,7 +1586,9 @@ impl<'a> ExpressionEvaluator<'a> {
 					err => return err,
 				};
 
-				if let Value::Array(RuntimeType::Str, values) = tooltips {
+				if let Value::Array(RuntimeType::None, _) = tooltips {
+					Vec::new()
+				} else if let Value::Array(RuntimeType::Str, values) = tooltips {
 					values
 						.into_iter()
 						.map(|value| {
@@ -1588,9 +1608,77 @@ impl<'a> ExpressionEvaluator<'a> {
 							),
 							interaction.lock_tooltips.1.clone(),
 						))
-						.add_note("expected type `[MouseEvent]`")]);
+						.add_note("expected type `[str]`")]);
 				}
 			};
+			let animated_tooltips = {
+				let tooltips = match self.evaluate_expression(&interaction.animated_tooltips) {
+					Flow::Ok(value) => value,
+					Flow::Return(loc, _) => {
+						return Flow::Err(vec![Diagnostic::new(Level::Error, "unexpected return")
+							.add_label(Label::primary("return expression here `{}`", loc))])
+					},
+					Flow::Break(loc, _) => {
+						return Flow::Err(vec![Diagnostic::new(Level::Error, "unexpected break")
+							.add_label(Label::primary("break expression here `{}`", loc))])
+					},
+					err => return err,
+				};
+
+				if let Value::Array(RuntimeType::None, _) = tooltips {
+					Vec::new()
+				} else if let Value::Array(
+					RuntimeType::Struct(RuntimeStructType::Inbuilt(InbuiltStruct::AnimTooltip)),
+					values,
+				) = tooltips
+				{
+					values
+						.into_iter()
+						.map(|value| {
+							if let Value::Object(Object { id: _, fields }) = value {
+								AnimTooltip {
+									percent: if let Some(v) = fields.get("percent") {
+										if let Value::Number(n) = v {
+											Some(*n)
+										} else {
+											unreachable!()
+										}
+									} else {
+										None
+									},
+									cursor: if let Some(v) = fields.get("cursor") {
+										if let Value::Enum(EnumAccess { id: _, value }) = v {
+											Some(FromPrimitive::from_usize(*value).unwrap())
+										} else {
+											unreachable!()
+										}
+									} else {
+										None
+									},
+									value: if let Value::String(s) = &fields["value"] {
+										s.clone()
+									} else {
+										unreachable!()
+									},
+								}
+							} else {
+								unreachable!()
+							}
+						})
+						.collect()
+				} else {
+					return Flow::Err(vec![Diagnostic::new(Level::Error, "mismatched types")
+						.add_label(Label::primary(
+							format!(
+								"this expression has a result of type `{}`",
+								tooltips.get_type(&self.item_map),
+							),
+							interaction.animated_tooltips.1.clone(),
+						))
+						.add_note("expected type `[AnimTooltip]`")]);
+				}
+			};
+			let cursor_animated = evaluate!(self, on interaction.cursor_animated.as_ref(), type Boolean "cursor_animated must be of type `bool`")?;
 			let can_lock =
 				evaluate!(self, on interaction.can_lock.as_ref(), type Boolean "can_lock must be of type `bool`")?;
 			let node_to_highlight = if let Some(node) = &interaction.node_to_highlight {
@@ -1621,6 +1709,58 @@ impl<'a> ExpressionEvaluator<'a> {
 			} else {
 				None
 			};
+			let drag_mode = match self.evaluate_expression(&interaction.drag_mode)? {
+				Value::Object(Object {
+					id: RuntimeStructType::Inbuilt(InbuiltStruct::NormalDrag),
+					fields,
+				}) => DragMode::Normal(NormalDrag {
+					axis: if let Value::Enum(EnumAccess { id: _, value }) = &fields["axis"] {
+						FromPrimitive::from_usize(*value).unwrap()
+					} else {
+						unreachable!()
+					},
+					scalar: if let Value::Number(n) = &fields["scalar"] {
+						*n
+					} else {
+						unreachable!()
+					},
+				}),
+				Value::Object(Object {
+					id: RuntimeStructType::Inbuilt(InbuiltStruct::TrajectoryDrag),
+					fields,
+				}) => DragMode::Trajectory(TrajectoryDrag {
+					anim: if let Value::String(s) = &fields["anim"] {
+						s.clone()
+					} else {
+						unreachable!()
+					},
+					node: if let Value::String(s) = &fields["node"] {
+						s.clone()
+					} else {
+						unreachable!()
+					},
+					sync: if let Value::Boolean(b) = &fields["sync"] {
+						*b
+					} else {
+						unreachable!()
+					},
+					use_lag: if let Value::Boolean(b) = &fields["use_lag"] {
+						*b
+					} else {
+						unreachable!()
+					},
+				}),
+				v => {
+					return Flow::Err(vec![Diagnostic::new(
+						Level::Error,
+						"expected either `NormalDrag` or `TrajectoryDrag`",
+					)
+					.add_label(Label::primary(
+						format!("found `{}`", v.get_type(&self.item_map)),
+						interaction.drag_mode.1.clone(),
+					))])
+				},
+			};
 
 			Flow::Ok(Value::Template(TemplateValue::Interaction(RuntimeInteraction {
 				legacy_cursors,
@@ -1631,8 +1771,11 @@ impl<'a> ExpressionEvaluator<'a> {
 				lock_events,
 				lock_tooltip_title,
 				lock_tooltips,
+				animated_tooltips,
+				cursor_animated,
 				can_lock,
 				node_to_highlight,
+				drag_mode,
 			})))
 		}
 	}
@@ -1642,66 +1785,67 @@ impl<'a> ExpressionEvaluator<'a> {
 			evaluate!(self, on anim, type String "animation name must be of type `str`")?,
 			anim.1.clone(),
 		);
-		let events =
-			if let Value::Array(RuntimeType::Struct(RuntimeStructType::Inbuilt(InbuiltStruct::Event)), values) =
-				self.evaluate_expression(events)?
-			{
-				values
-					.into_iter()
-					.map(|value| {
-						if let Value::Object(Object {
-							id: RuntimeStructType::Inbuilt(InbuiltStruct::Event),
-							fields,
-						}) = value
-						{
-							RuntimeEvent {
-								time: if let Value::Number(n) = fields["time"] {
-									n
-								} else {
-									unreachable!()
-								},
-								direction: if let Value::Enum(EnumAccess { id: _, value }) = fields["direction"] {
-									FromPrimitive::from_usize(value).unwrap()
-								} else {
-									unreachable!()
-								},
-								sounds: if let Value::Array(_, values) = &fields["sounds"] {
-									values
-										.into_iter()
-										.map(|v| {
-											if let Value::String(s) = v {
-												s.clone()
-											} else {
-												unreachable!()
-											}
-										})
-										.collect()
-								} else {
-									unreachable!()
-								},
-								effects: if let Value::Array(_, values) = &fields["effects"] {
-									values
-										.into_iter()
-										.map(|v| {
-											if let Value::String(s) = v {
-												s.clone()
-											} else {
-												unreachable!()
-											}
-										})
-										.collect()
-								} else {
-									unreachable!()
-								},
-							}
-						} else {
-							unreachable!()
+		let temp = self.evaluate_expression(events)?;
+		let events = if let Value::Array(RuntimeType::None, _) = temp {
+			Vec::new()
+		} else if let Value::Array(RuntimeType::Struct(RuntimeStructType::Inbuilt(InbuiltStruct::Event)), values) = temp
+		{
+			values
+				.into_iter()
+				.map(|value| {
+					if let Value::Object(Object {
+						id: RuntimeStructType::Inbuilt(InbuiltStruct::Event),
+						fields,
+					}) = value
+					{
+						RuntimeEvent {
+							time: if let Value::Number(n) = fields["time"] {
+								n
+							} else {
+								unreachable!()
+							},
+							direction: if let Value::Enum(EnumAccess { id: _, value }) = fields["direction"] {
+								FromPrimitive::from_usize(value).unwrap()
+							} else {
+								unreachable!()
+							},
+							sounds: if let Value::Array(_, values) = &fields["sounds"] {
+								values
+									.into_iter()
+									.map(|v| {
+										if let Value::String(s) = v {
+											s.clone()
+										} else {
+											unreachable!()
+										}
+									})
+									.collect()
+							} else {
+								unreachable!()
+							},
+							effects: if let Value::Array(_, values) = &fields["effects"] {
+								values
+									.into_iter()
+									.map(|v| {
+										if let Value::String(s) = v {
+											s.clone()
+										} else {
+											unreachable!()
+										}
+									})
+									.collect()
+							} else {
+								unreachable!()
+							},
 						}
-					})
-					.collect()
-			} else {
-				unreachable!()
-			};
+					} else {
+						unreachable!()
+					}
+				})
+				.collect()
+		} else {
+			unreachable!()
+		};
 
 		Flow::Ok(Value::Template(TemplateValue::Events(anim, events)))
 	}
@@ -1738,6 +1882,354 @@ impl<'a> ExpressionEvaluator<'a> {
 			frequency,
 			mode,
 			code,
+		})))
+	}
+
+	fn evaluate_setter_struct(&mut self, expr: &Expression<'a>) -> Result<Setter, Vec<Diagnostic>> {
+		let value = match self.evaluate_expression(expr) {
+			Flow::Ok(value) => value,
+			Flow::Return(loc, _) => {
+				return Err(vec![Diagnostic::new(Level::Error, "unexpected return")
+					.add_label(Label::primary("return expression here `{}`", loc))])
+			},
+			Flow::Break(loc, _) => {
+				return Err(vec![Diagnostic::new(Level::Error, "unexpected break")
+					.add_label(Label::primary("break expression here `{}`", loc))])
+			},
+			Flow::Err(err) => return Err(err),
+		};
+		if let Value::Object(Object {
+			id: RuntimeStructType::Inbuilt(InbuiltStruct::Setter),
+			fields,
+		}) = value
+		{
+			let set = if let Value::Code(code) = &fields["set"] {
+				if code.ty == RuntimeType::Num || code.ty == RuntimeType::Bool {
+					code.value.clone()
+				} else {
+					return Err(vec![Diagnostic::new(
+						Level::Error,
+						"parameter handler value output must be of type `num` or `bool`",
+					)
+					.add_label(Label::primary(
+						format!("this code has a result of type `{}`", code.ty),
+						expr.1.clone(),
+					))]);
+				}
+			} else {
+				unreachable!()
+			};
+			let bindings = {
+				let mut out = Vec::new();
+				if let Value::Array(RuntimeType::None, _) = &fields["bindings"] {
+				} else if let Value::Array(_, values) = &fields["bindings"] {
+					for value in values {
+						out.push(if let Value::Object(Object { id: _, fields }) = value {
+							let param = if let Value::Code(code) = &fields["param"] {
+								if code.ty == RuntimeType::Num || code.ty == RuntimeType::Bool {
+									code.value.clone()
+								} else {
+									return Err(vec![Diagnostic::new(
+										Level::Error,
+										"parameter handler value output must be of type `num` or `bool`",
+									)
+									.add_label(Label::primary(
+										format!("this code has a result of type `{}`", code.ty),
+										expr.1.clone(),
+									))]);
+								}
+							} else {
+								unreachable!()
+							};
+							let target = if let Some(event) = fields.get("event") {
+								if let Value::String(s) = event {
+									BindTarget::Event(s.clone())
+								} else {
+									unreachable!()
+								}
+							} else if let Some(alias) = fields.get("alias") {
+								if let Value::String(s) = alias {
+									BindTarget::Alias(s.clone())
+								} else {
+									unreachable!()
+								}
+							} else {
+								unreachable!()
+							};
+
+							Binding { target, param }
+						} else {
+							unreachable!()
+						});
+					}
+				} else {
+					unreachable!()
+				}
+				out
+			};
+
+			Ok(Setter { set, bindings })
+		} else {
+			return Err(vec![Diagnostic::new(Level::Error, "expected type `Setter`").add_label(
+				Label::primary(
+					format!(
+						"this expression has a result of type `{}`",
+						value.get_type(&self.item_map)
+					),
+					expr.1.clone(),
+				),
+			)]);
+		}
+	}
+
+	fn evaluate_input_event(&mut self, event: &InputEvent<'a>) -> Flow<'a> {
+		let name = evaluate!(self, on event.name.as_ref(), type String "input event name must be of type `str`")?;
+		let value = self.evaluate_expression(event.legacy_icon.as_ref())?;
+		let legacy_icon = if let Value::Enum(EnumAccess {
+			id: EnumType::Inbuilt(InbuiltEnum::Icon),
+			value,
+		}) = value
+		{
+			FromPrimitive::from_usize(value).unwrap()
+		} else {
+			return Flow::Err(vec![Diagnostic::new(
+				Level::Error,
+				"input event legacy icon must be of type `Icon`",
+			)
+			.add_label(Label::primary(
+				format!(
+					"this expression has a result of type `{}`",
+					value.get_type(&self.item_map)
+				),
+				event.legacy_icon.1.clone(),
+			))]);
+		};
+		let lock_icon = if let Value::Enum(EnumAccess {
+			id: EnumType::Inbuilt(InbuiltEnum::Icon),
+			value,
+		}) = value
+		{
+			FromPrimitive::from_usize(value).unwrap()
+		} else {
+			return Flow::Err(vec![Diagnostic::new(
+				Level::Error,
+				"input event lock icon must be of type `Icon`",
+			)
+			.add_label(Label::primary(
+				format!(
+					"this expression has a result of type `{}`",
+					value.get_type(&self.item_map)
+				),
+				event.lock_icon.1.clone(),
+			))]);
+		};
+		let description = {
+			let code = evaluate!(self, on event.description.as_ref(), type Code "input event description must be of type `code`")?;
+			if code.ty == RuntimeType::Str {
+				code.value
+			} else {
+				return Flow::Err(vec![Diagnostic::new(
+					Level::Error,
+					"input event description output must be of type `str`",
+				)
+				.add_label(Label::primary(
+					format!("this code has a result of type `{}`", value.get_type(&self.item_map)),
+					event.description.1.clone(),
+				))]);
+			}
+		};
+		let tooltip_value = {
+			let code = evaluate!(self, on event.tooltip_value.as_ref(), type Code "input event tooltip value must be of type `code`")?;
+			if code.ty == RuntimeType::Str {
+				code.value
+			} else {
+				return Flow::Err(vec![Diagnostic::new(
+					Level::Error,
+					"input event tooltip value output must be of type `str`",
+				)
+				.add_label(Label::primary(
+					format!("this code has a result of type `{}`", code.ty),
+					event.tooltip_value.1.clone(),
+				))]);
+			}
+		};
+		let legacy_interaction = {
+			let value = self.evaluate_expression(event.legacy_interaction.as_ref())?;
+			if let Value::Array(RuntimeType::Enum(RuntimeEnumType::Inbuilt(InbuiltEnum::InteractionTip)), values) =
+				value
+			{
+				InteractionType::Inbuilt(
+					values
+						.into_iter()
+						.map(|value| {
+							if let Value::Enum(EnumAccess {
+								id: EnumType::Inbuilt(InbuiltEnum::InteractionTip),
+								value,
+							}) = value
+							{
+								FromPrimitive::from_usize(value).unwrap()
+							} else {
+								unreachable!()
+							}
+						})
+						.collect(),
+				)
+			} else if let Value::Code(code) = value {
+				if code.ty == RuntimeType::Str {
+					InteractionType::Custom(code.value)
+				} else {
+					return Flow::Err(vec![Diagnostic::new(
+						Level::Error,
+						"input event legacy interaction message output must be of type `str`",
+					)
+					.add_label(Label::primary(
+						format!("this code has a result of type `{}`", code.ty),
+						event.legacy_interaction.1.clone(),
+					))]);
+				}
+			} else {
+				return Flow::Err(vec![Diagnostic::new(
+					Level::Error,
+					"input event legacy interaction message must be of type `[InteractionTip]` or `code`",
+				)
+				.add_label(Label::primary(
+					format!(
+						"this expression has a result of type `{}`",
+						value.get_type(&self.item_map)
+					),
+					event.legacy_interaction.1.clone(),
+				))]);
+			}
+		};
+		let lock_interaction = {
+			let value = self.evaluate_expression(event.lock_interaction.as_ref())?;
+			if let Value::Array(RuntimeType::Enum(RuntimeEnumType::Inbuilt(InbuiltEnum::InteractionTip)), values) =
+				value
+			{
+				InteractionType::Inbuilt(
+					values
+						.into_iter()
+						.map(|value| {
+							if let Value::Enum(EnumAccess {
+								id: EnumType::Inbuilt(InbuiltEnum::InteractionTip),
+								value,
+							}) = value
+							{
+								FromPrimitive::from_usize(value).unwrap()
+							} else {
+								unreachable!()
+							}
+						})
+						.collect(),
+				)
+			} else if let Value::Code(code) = value {
+				if code.ty == RuntimeType::Str {
+					InteractionType::Custom(code.value)
+				} else {
+					return Flow::Err(vec![Diagnostic::new(
+						Level::Error,
+						"input event lock interaction message output must be of type `str`",
+					)
+					.add_label(Label::primary(
+						format!("this code has a result of type `{}`", code.ty),
+						event.lock_interaction.1.clone(),
+					))]);
+				}
+			} else {
+				return Flow::Err(vec![Diagnostic::new(
+					Level::Error,
+					"input event lock interaction message must be of type `[InteractionTip]` or `code`",
+				)
+				.add_label(Label::primary(
+					format!(
+						"this expression has a result of type `{}`",
+						value.get_type(&self.item_map)
+					),
+					event.lock_interaction.1.clone(),
+				))]);
+			}
+		};
+		let value = {
+			let code = evaluate!(self, on event.value.as_ref(), type Code "input event value must be of type `code`")?;
+			if code.ty == RuntimeType::Num || code.ty == RuntimeType::Bool {
+				code.value
+			} else {
+				return Flow::Err(vec![Diagnostic::new(
+					Level::Error,
+					"input event value output must be of type `num` or `bool`",
+				)
+				.add_label(Label::primary(
+					format!("this code has a result of type `{}`", code.ty),
+					event.value.1.clone(),
+				))]);
+			}
+		};
+		let units = evaluate!(self, on event.units.as_ref(), type String "input event units must be of type `str`")?;
+		let init =
+			evaluate!(self, on event.init.as_ref(), type Code "input event initializer must be of type `code`")?.value;
+		let value_temp = self.evaluate_expression(event.watch.as_ref())?;
+		let watch = if let Value::Array(RuntimeType::None, _) = value_temp {
+			Vec::new()
+		} else if let Value::Array(RuntimeType::Str, values) = value_temp {
+			let mut out = Vec::new();
+			for value in values {
+				out.push(if let Value::String(s) = value {
+					if let Some(c) = s.chars().next() {
+						match c {
+							'A' => WatchedVariable::Sim(s[2..].to_string()),
+							'L' => WatchedVariable::Local(s[2..].to_string()),
+							_ => {
+								return Flow::Err(vec![Diagnostic::new(
+									Level::Error,
+									"input event watch variable must be an simvar or local variable",
+								)
+								.add_label(Label::primary("here", event.watch.1.clone()))]);
+							},
+						}
+					} else {
+						return Flow::Err(vec![Diagnostic::new(
+							Level::Error,
+							"input event watch variable is empty",
+						)
+						.add_label(Label::primary("here", event.watch.1.clone()))]);
+					}
+				} else {
+					unreachable!()
+				});
+			}
+			out
+		} else {
+			return Flow::Err(vec![Diagnostic::new(
+				Level::Error,
+				"input event lock interaction message must be of type `[InteractionTip]` or `code`",
+			)
+			.add_label(Label::primary(
+				format!(
+					"this expression has a result of type `{}`",
+					value_temp.get_type(&self.item_map)
+				),
+				event.lock_interaction.1.clone(),
+			))]);
+		};
+		let inc = self.evaluate_setter_struct(event.inc.as_ref())?;
+		let dec = self.evaluate_setter_struct(event.dec.as_ref())?;
+		let set = self.evaluate_setter_struct(event.set.as_ref())?;
+
+		Flow::Ok(Value::Template(TemplateValue::InputEvent(RuntimeInputEvent {
+			name,
+			legacy_icon,
+			lock_icon,
+			description,
+			tooltip_value,
+			legacy_interaction,
+			lock_interaction,
+			value,
+			units,
+			init,
+			watch,
+			inc,
+			dec,
+			set,
 		})))
 	}
 
@@ -1940,7 +2432,9 @@ impl<'a> ExpressionEvaluator<'a> {
 				}
 			} else if value.0 .0 == "sounds" {
 				let sounds = self.evaluate_expression(&value.1)?;
-				if let Value::Array(RuntimeType::Str, _) = sounds {
+				if let Value::Array(RuntimeType::None, _) = sounds {
+					obj.fields.insert("sounds".to_string(), sounds);
+				} else if let Value::Array(RuntimeType::Str, _) = sounds {
 					obj.fields.insert("sounds".to_string(), sounds);
 				} else {
 					errors.push(
@@ -1954,7 +2448,9 @@ impl<'a> ExpressionEvaluator<'a> {
 				}
 			} else if value.0 .0 == "effects" {
 				let effects = self.evaluate_expression(&value.1)?;
-				if let Value::Array(RuntimeType::Str, _) = effects {
+				if let Value::Array(RuntimeType::None, _) = effects {
+					obj.fields.insert("effects".to_string(), effects);
+				} else if let Value::Array(RuntimeType::Str, _) = effects {
 					obj.fields.insert("effects".to_string(), effects);
 				} else {
 					errors.push(
@@ -1996,6 +2492,376 @@ impl<'a> ExpressionEvaluator<'a> {
 		if !obj.fields.contains_key("effects") {
 			obj.fields
 				.insert("effects".to_string(), Value::Array(RuntimeType::Str, Vec::new()));
+		}
+
+		if errors.len() == 0 {
+			Flow::Ok(Value::Object(obj))
+		} else {
+			Flow::Err(errors)
+		}
+	}
+
+	fn evaluate_anim_tooltip(&mut self, loc: Location<'a>, values: &[(Ident<'a>, Expression<'a>)]) -> Flow<'a> {
+		let mut obj = Object {
+			id: RuntimeStructType::Inbuilt(InbuiltStruct::AnimTooltip),
+			fields: HashMap::new(),
+		};
+
+		let mut errors = Vec::new();
+
+		for value in values {
+			if value.0 .0 == "percent" {
+				let percent = self.evaluate_expression(&value.1)?;
+				let ty = percent.get_type(&self.item_map);
+				if ty == RuntimeType::Num {
+					obj.fields.insert("percent".to_string(), percent);
+				} else {
+					errors.push(
+						Diagnostic::new(Level::Error, "struct field type mismatch")
+							.add_label(Label::primary(format!("found type `{}`", ty), value.1 .1.clone()))
+							.add_note("expected type `num`"),
+					);
+				}
+			} else if value.0 .0 == "cursor" {
+				let cursor = self.evaluate_expression(&value.1)?;
+				let ty = cursor.get_type(&self.item_map);
+				if ty == RuntimeType::Enum(RuntimeEnumType::Inbuilt(InbuiltEnum::Cursor)) {
+					obj.fields.insert("cursor".to_string(), cursor);
+				} else {
+					errors.push(
+						Diagnostic::new(Level::Error, "struct field type mismatch")
+							.add_label(Label::primary(format!("found type `{}`", ty), value.1 .1.clone()))
+							.add_note("expected type `Cursor`"),
+					);
+				}
+			} else if value.0 .0 == "value" {
+				let val = self.evaluate_expression(&value.1)?;
+				let ty = val.get_type(&self.item_map);
+				if ty == RuntimeType::Str {
+					obj.fields.insert("value".to_string(), val);
+				} else {
+					errors.push(
+						Diagnostic::new(Level::Error, "struct field type mismatch")
+							.add_label(Label::primary(format!("found type `{}`", ty), value.1 .1.clone()))
+							.add_note("expected type `str`"),
+					);
+				}
+			} else {
+				errors.push(Diagnostic::new(Level::Error, "unknown field").add_label(Label::primary(
+					format!("field `{}` does not exist on struct `AnimTooltip`", value.0 .0),
+					value.0 .1.clone(),
+				)))
+			}
+		}
+
+		if !obj.fields.contains_key("value") {
+			errors.push(
+				Diagnostic::new(Level::Error, "missing field")
+					.add_label(Label::primary("field `value` is missing for struct `AnimTooltip`", loc)),
+			)
+		}
+
+		if errors.len() == 0 {
+			Flow::Ok(Value::Object(obj))
+		} else {
+			Flow::Err(errors)
+		}
+	}
+
+	fn evaluate_normal_drag(&mut self, loc: Location<'a>, values: &[(Ident<'a>, Expression<'a>)]) -> Flow<'a> {
+		let mut obj = Object {
+			id: RuntimeStructType::Inbuilt(InbuiltStruct::NormalDrag),
+			fields: HashMap::new(),
+		};
+
+		let mut errors = Vec::new();
+
+		for value in values {
+			if value.0 .0 == "axis" {
+				let axis = self.evaluate_expression(&value.1)?;
+				let ty = axis.get_type(&self.item_map);
+				if ty == RuntimeType::Enum(RuntimeEnumType::Inbuilt(InbuiltEnum::Axis)) {
+					obj.fields.insert("axis".to_string(), axis);
+				} else {
+					errors.push(
+						Diagnostic::new(Level::Error, "struct field type mismatch")
+							.add_label(Label::primary(format!("found type `{}`", ty), value.1 .1.clone()))
+							.add_note("expected type `Axis`"),
+					);
+				}
+			} else if value.0 .0 == "scalar" {
+				let scalar = self.evaluate_expression(&value.1)?;
+				let ty = scalar.get_type(&self.item_map);
+				if ty == RuntimeType::Num {
+					obj.fields.insert("scalar".to_string(), scalar);
+				} else {
+					errors.push(
+						Diagnostic::new(Level::Error, "struct field type mismatch")
+							.add_label(Label::primary(format!("found type `{}`", ty), value.1 .1.clone()))
+							.add_note("expected type `num`"),
+					);
+				}
+			} else {
+				errors.push(Diagnostic::new(Level::Error, "unknown field").add_label(Label::primary(
+					format!("field `{}` does not exist on struct `NormalDrag`", value.0 .0),
+					value.0 .1.clone(),
+				)))
+			}
+		}
+
+		if !obj.fields.contains_key("axis") {
+			errors.push(Diagnostic::new(Level::Error, "missing field").add_label(Label::primary(
+				"field `axis` is missing for struct `NormalDrag`",
+				loc.clone(),
+			)))
+		}
+		if !obj.fields.contains_key("scalar") {
+			errors.push(
+				Diagnostic::new(Level::Error, "missing field")
+					.add_label(Label::primary("field `scalar` is missing for struct `NormalDrag`", loc)),
+			)
+		}
+
+		if errors.len() == 0 {
+			Flow::Ok(Value::Object(obj))
+		} else {
+			Flow::Err(errors)
+		}
+	}
+
+	fn evaluate_trajectory_drag(&mut self, loc: Location<'a>, values: &[(Ident<'a>, Expression<'a>)]) -> Flow<'a> {
+		let mut obj = Object {
+			id: RuntimeStructType::Inbuilt(InbuiltStruct::TrajectoryDrag),
+			fields: HashMap::new(),
+		};
+
+		let mut errors = Vec::new();
+
+		for value in values {
+			if value.0 .0 == "anim" {
+				let anim = self.evaluate_expression(&value.1)?;
+				let ty = anim.get_type(&self.item_map);
+				if ty == RuntimeType::Str {
+					obj.fields.insert("anim".to_string(), anim);
+				} else {
+					errors.push(
+						Diagnostic::new(Level::Error, "struct field type mismatch")
+							.add_label(Label::primary(format!("found type `{}`", ty), value.1 .1.clone()))
+							.add_note("expected type `str`"),
+					);
+				}
+			} else if value.0 .0 == "node" {
+				let node = self.evaluate_expression(&value.1)?;
+				let ty = node.get_type(&self.item_map);
+				if ty == RuntimeType::Str {
+					obj.fields.insert("node".to_string(), node);
+				} else {
+					errors.push(
+						Diagnostic::new(Level::Error, "struct field type mismatch")
+							.add_label(Label::primary(format!("found type `{}`", ty), value.1 .1.clone()))
+							.add_note("expected type `str`"),
+					);
+				}
+			} else if value.0 .0 == "sync" {
+				let sync = self.evaluate_expression(&value.1)?;
+				let ty = sync.get_type(&self.item_map);
+				if ty == RuntimeType::Bool {
+					obj.fields.insert("sync".to_string(), sync);
+				} else {
+					errors.push(
+						Diagnostic::new(Level::Error, "struct field type mismatch")
+							.add_label(Label::primary(format!("found type `{}`", ty), value.1 .1.clone()))
+							.add_note("expected type `bool`"),
+					);
+				}
+			} else if value.0 .0 == "use_lag" {
+				let use_lag = self.evaluate_expression(&value.1)?;
+				let ty = use_lag.get_type(&self.item_map);
+				if ty == RuntimeType::Bool {
+					obj.fields.insert("use_lag".to_string(), use_lag);
+				} else {
+					errors.push(
+						Diagnostic::new(Level::Error, "struct field type mismatch")
+							.add_label(Label::primary(format!("found type `{}`", ty), value.1 .1.clone()))
+							.add_note("expected type `bool`"),
+					);
+				}
+			} else {
+				errors.push(Diagnostic::new(Level::Error, "unknown field").add_label(Label::primary(
+					format!("field `{}` does not exist on struct `TrajectoryDrag`", value.0 .0),
+					value.0 .1.clone(),
+				)))
+			}
+		}
+
+		if !obj.fields.contains_key("anim") {
+			errors.push(Diagnostic::new(Level::Error, "missing field").add_label(Label::primary(
+				"field `anim` is missing for struct `TrajectoryDrag`",
+				loc.clone(),
+			)))
+		}
+		if !obj.fields.contains_key("node") {
+			errors.push(Diagnostic::new(Level::Error, "missing field").add_label(Label::primary(
+				"field `node` is missing for struct `TrajectoryDrag`",
+				loc.clone(),
+			)))
+		}
+		if !obj.fields.contains_key("sync") {
+			errors.push(Diagnostic::new(Level::Error, "missing field").add_label(Label::primary(
+				"field `sync` is missing for struct `TrajectoryDrag`",
+				loc.clone(),
+			)))
+		}
+		if !obj.fields.contains_key("use_lag") {
+			errors.push(Diagnostic::new(Level::Error, "missing field").add_label(Label::primary(
+				"field `use_lag` is missing for struct `TrajectoryDrag`",
+				loc,
+			)))
+		}
+
+		if errors.len() == 0 {
+			Flow::Ok(Value::Object(obj))
+		} else {
+			Flow::Err(errors)
+		}
+	}
+
+	fn evaluate_setter(&mut self, loc: Location<'a>, values: &[(Ident<'a>, Expression<'a>)]) -> Flow<'a> {
+		let mut obj = Object {
+			id: RuntimeStructType::Inbuilt(InbuiltStruct::Setter),
+			fields: HashMap::new(),
+		};
+
+		let mut errors = Vec::new();
+
+		for value in values {
+			if value.0 .0 == "set" {
+				let axis = self.evaluate_expression(&value.1)?;
+				let ty = axis.get_type(&self.item_map);
+				if ty == RuntimeType::Code {
+					obj.fields.insert("set".to_string(), axis);
+				} else {
+					errors.push(
+						Diagnostic::new(Level::Error, "struct field type mismatch")
+							.add_label(Label::primary(format!("found type `{}`", ty), value.1 .1.clone()))
+							.add_note("expected type `code`"),
+					);
+				}
+			} else if value.0 .0 == "bindings" {
+				let scalar = self.evaluate_expression(&value.1)?;
+				let ty = scalar.get_type(&self.item_map);
+				if ty
+					== RuntimeType::Array(Box::new(RuntimeType::Struct(RuntimeStructType::Inbuilt(
+						InbuiltStruct::Binding,
+					)))) || ty == RuntimeType::Array(Box::new(RuntimeType::None))
+				{
+					obj.fields.insert("bindings".to_string(), scalar);
+				} else {
+					errors.push(
+						Diagnostic::new(Level::Error, "struct field type mismatch")
+							.add_label(Label::primary(format!("found type `{}`", ty), value.1 .1.clone()))
+							.add_note("expected type `[Binding]`"),
+					);
+				}
+			} else {
+				errors.push(Diagnostic::new(Level::Error, "unknown field").add_label(Label::primary(
+					format!("field `{}` does not exist on struct `Setter`", value.0 .0),
+					value.0 .1.clone(),
+				)))
+			}
+		}
+
+		if !obj.fields.contains_key("set") {
+			errors.push(Diagnostic::new(Level::Error, "missing field").add_label(Label::primary(
+				"field `set` is missing for struct `Setter`",
+				loc.clone(),
+			)))
+		}
+		if !obj.fields.contains_key("bindings") {
+			errors.push(
+				Diagnostic::new(Level::Error, "missing field")
+					.add_label(Label::primary("field `bindings` is missing for struct `Setter`", loc)),
+			)
+		}
+
+		if errors.len() == 0 {
+			Flow::Ok(Value::Object(obj))
+		} else {
+			Flow::Err(errors)
+		}
+	}
+
+	fn evaluate_binding(&mut self, loc: Location<'a>, values: &[(Ident<'a>, Expression<'a>)]) -> Flow<'a> {
+		let mut obj = Object {
+			id: RuntimeStructType::Inbuilt(InbuiltStruct::Binding),
+			fields: HashMap::new(),
+		};
+
+		let mut errors = Vec::new();
+
+		for value in values {
+			if value.0 .0 == "event" {
+				let event = self.evaluate_expression(&value.1)?;
+				let ty = event.get_type(&self.item_map);
+				if ty == RuntimeType::Str {
+					obj.fields.insert("event".to_string(), event);
+				} else {
+					errors.push(
+						Diagnostic::new(Level::Error, "struct field type mismatch")
+							.add_label(Label::primary(format!("found type `{}`", ty), value.1 .1.clone()))
+							.add_note("expected type `str`"),
+					);
+				}
+			} else if value.0 .0 == "alias" {
+				let alias = self.evaluate_expression(&value.1)?;
+				let ty = alias.get_type(&self.item_map);
+				if ty == RuntimeType::Str {
+					obj.fields.insert("alias".to_string(), alias);
+				} else {
+					errors.push(
+						Diagnostic::new(Level::Error, "struct field type mismatch")
+							.add_label(Label::primary(format!("found type `{}`", ty), value.1 .1.clone()))
+							.add_note("expected type `str`"),
+					);
+				}
+			} else if value.0 .0 == "param" {
+				let param = self.evaluate_expression(&value.1)?;
+				let ty = param.get_type(&self.item_map);
+				if ty == RuntimeType::Code {
+					obj.fields.insert("param".to_string(), param);
+				} else {
+					errors.push(
+						Diagnostic::new(Level::Error, "struct field type mismatch")
+							.add_label(Label::primary(format!("found type `{}`", ty), value.1 .1.clone()))
+							.add_note("expected type `code`"),
+					);
+				}
+			} else {
+				errors.push(Diagnostic::new(Level::Error, "unknown field").add_label(Label::primary(
+					format!("field `{}` does not exist on struct `Binding`", value.0 .0),
+					value.0 .1.clone(),
+				)))
+			}
+		}
+
+		if !obj.fields.contains_key("event") && !obj.fields.contains_key("alias") {
+			errors.push(Diagnostic::new(Level::Error, "missing field").add_label(Label::primary(
+				"field `event` or `alias` is missing for struct `Binding`",
+				loc.clone(),
+			)))
+		} else if obj.fields.contains_key("event") && obj.fields.contains_key("alias") {
+			errors.push(
+				Diagnostic::new(Level::Error, "only one field allowed").add_label(Label::primary(
+					"only one of field `event` or `alias` is allowed for struct `Binding`",
+					loc.clone(),
+				)),
+			)
+		}
+		if !obj.fields.contains_key("param") {
+			errors.push(
+				Diagnostic::new(Level::Error, "missing field")
+					.add_label(Label::primary("field `param` is missing for struct `Binding`", loc)),
+			)
 		}
 
 		if errors.len() == 0 {

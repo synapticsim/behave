@@ -234,6 +234,7 @@ pub enum BehaviorExpression<'a> {
 	Interaction(Interaction<'a>),
 	Events(Box<Expression<'a>>, Box<Expression<'a>>),
 	Update(Update<'a>),
+	InputEvent(InputEvent<'a>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -298,12 +299,18 @@ pub enum InbuiltEnum {
 	Icon,
 	InteractionTip,
 	InteractionMode,
+	Axis,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum InbuiltStruct {
 	Cursors,
 	Event,
+	AnimTooltip,
+	NormalDrag,
+	TrajectoryDrag,
+	Setter,
+	Binding,
 }
 
 impl InbuiltEnum {
@@ -316,6 +323,7 @@ impl InbuiltEnum {
 			InbuiltEnum::Icon => "Icon",
 			InbuiltEnum::InteractionTip => "InteractionTip",
 			InbuiltEnum::InteractionMode => "Interaction",
+			InbuiltEnum::Axis => "Axis",
 		}
 		.to_string()
 	}
@@ -326,6 +334,11 @@ impl InbuiltStruct {
 		match self {
 			InbuiltStruct::Cursors => "Cursors",
 			InbuiltStruct::Event => "Event",
+			InbuiltStruct::AnimTooltip => "AnimTooltip",
+			InbuiltStruct::NormalDrag => "NormalDrag",
+			InbuiltStruct::TrajectoryDrag => "TrajectoryDrag",
+			InbuiltStruct::Setter => "Setter",
+			InbuiltStruct::Binding => "Binding",
 		}
 		.to_string()
 	}
@@ -559,6 +572,24 @@ impl InteractionMode {
 	}
 }
 
+#[derive(Clone, Copy, Debug, FromPrimitive, PartialEq, Eq, Hash)]
+pub enum Axis {
+	X,
+	Y,
+	Any,
+}
+
+impl Axis {
+	pub fn to_string(self) -> &'static str {
+		use Axis::*;
+		match self {
+			X => "X",
+			Y => "Y",
+			Any => "Any",
+		}
+	}
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct EnumAccess {
 	pub id: EnumType,
@@ -666,8 +697,11 @@ pub struct Interaction<'a> {
 	pub lock_callback: Box<Expression<'a>>,
 	pub lock_tooltip_title: Box<Expression<'a>>,
 	pub lock_tooltips: Box<Expression<'a>>,
+	pub animated_tooltips: Box<Expression<'a>>,
+	pub cursor_animated: Box<Expression<'a>>,
 	pub can_lock: Box<Expression<'a>>,
 	pub node_to_highlight: Option<Box<Expression<'a>>>,
+	pub drag_mode: Box<Expression<'a>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -675,6 +709,24 @@ pub struct Update<'a> {
 	pub frequency: Option<Box<Expression<'a>>>,
 	pub mode: Box<Expression<'a>>,
 	pub code: Box<Expression<'a>>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct InputEvent<'a> {
+	pub name: Box<Expression<'a>>,
+	pub legacy_icon: Box<Expression<'a>>,
+	pub lock_icon: Box<Expression<'a>>,
+	pub description: Box<Expression<'a>>,
+	pub tooltip_value: Box<Expression<'a>>,
+	pub legacy_interaction: Box<Expression<'a>>,
+	pub lock_interaction: Box<Expression<'a>>,
+	pub value: Box<Expression<'a>>,
+	pub units: Box<Expression<'a>>,
+	pub init: Box<Expression<'a>>,
+	pub watch: Box<Expression<'a>>,
+	pub inc: Box<Expression<'a>>,
+	pub dec: Box<Expression<'a>>,
+	pub set: Box<Expression<'a>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -780,6 +832,7 @@ pub trait ASTPass {
 				BehaviorExpression::Events(ref mut e1, ref mut e2) => self.events((e1.as_mut(), e2.as_mut())),
 				BehaviorExpression::Interaction(ref mut interaction) => self.interaction(interaction),
 				BehaviorExpression::Update(ref mut update) => self.update(update),
+				BehaviorExpression::InputEvent(ref mut event) => self.input_event(event),
 			},
 		}
 	}
@@ -957,11 +1010,16 @@ pub trait ASTPass {
 		self.expression(&mut interaction.lock_events.0);
 		self.expression(&mut interaction.legacy_callback.0);
 		self.expression(&mut interaction.lock_events.0);
+		self.expression(&mut interaction.lock_tooltip_title.0);
+		self.expression(&mut interaction.lock_tooltips.0);
+		self.expression(&mut interaction.animated_tooltips.0);
+		self.expression(&mut interaction.cursor_animated.0);
 		self.expression(&mut interaction.can_lock.0);
 		interaction
 			.node_to_highlight
 			.as_mut()
 			.map(|i| self.expression(&mut i.0));
+		self.expression(&mut interaction.drag_mode.0);
 	}
 
 	fn update(&mut self, update: &mut Update) {
@@ -973,5 +1031,22 @@ pub trait ASTPass {
 	fn events(&mut self, event: (&mut Expression, &mut Expression)) {
 		self.expression(&mut event.0 .0);
 		self.expression(&mut event.1 .0);
+	}
+
+	fn input_event(&mut self, event: &mut InputEvent) {
+		self.expression(&mut event.name.0);
+		self.expression(&mut event.legacy_icon.0);
+		self.expression(&mut event.lock_icon.0);
+		self.expression(&mut event.description.0);
+		self.expression(&mut event.tooltip_value.0);
+		self.expression(&mut event.legacy_interaction.0);
+		self.expression(&mut event.lock_interaction.0);
+		self.expression(&mut event.value.0);
+		self.expression(&mut event.units.0);
+		self.expression(&mut event.init.0);
+		self.expression(&mut event.watch.0);
+		self.expression(&mut event.inc.0);
+		self.expression(&mut event.dec.0);
+		self.expression(&mut event.set.0);
 	}
 }

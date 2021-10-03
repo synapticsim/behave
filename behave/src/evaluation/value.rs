@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
 
 use crate::ast::{
+	Axis,
 	Cursor,
 	Direction,
 	Enum,
@@ -10,11 +11,13 @@ use crate::ast::{
 	Function,
 	FunctionType,
 	Hitbox,
+	Icon,
 	Ident,
 	InbuiltEnum,
 	InbuiltFunction,
 	InbuiltStruct,
 	InteractionMode,
+	InteractionTip,
 	Location,
 	MouseEvent,
 	ResolvedType,
@@ -257,6 +260,7 @@ pub enum TemplateValue<'a> {
 	Events((String, Location<'a>), Vec<RuntimeEvent>),
 	Block(Vec<TemplateValue<'a>>),
 	Update(RuntimeUpdate),
+	InputEvent(RuntimeInputEvent),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -306,6 +310,33 @@ pub enum Cursors {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct AnimTooltip {
+	pub percent: Option<f64>,
+	pub cursor: Option<Cursor>,
+	pub value: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct NormalDrag {
+	pub axis: Axis,
+	pub scalar: f64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TrajectoryDrag {
+	pub anim: String,
+	pub node: String,
+	pub sync: bool,
+	pub use_lag: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum DragMode {
+	Normal(NormalDrag),
+	Trajectory(TrajectoryDrag),
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct RuntimeInteraction<'a> {
 	pub legacy_cursors: Cursors,
 	pub lock_cursors: Cursors,
@@ -315,8 +346,11 @@ pub struct RuntimeInteraction<'a> {
 	pub lock_callback: String,
 	pub lock_tooltip_title: String,
 	pub lock_tooltips: Vec<String>,
+	pub animated_tooltips: Vec<AnimTooltip>,
+	pub cursor_animated: bool,
 	pub can_lock: bool,
 	pub node_to_highlight: Option<(String, Location<'a>)>,
+	pub drag_mode: DragMode,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -325,6 +359,54 @@ pub struct RuntimeEvent {
 	pub direction: Direction,
 	pub sounds: Vec<String>,
 	pub effects: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum InteractionType {
+	Custom(String),
+	Inbuilt(Vec<InteractionTip>),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum WatchedVariable {
+	Local(String),
+	Sim(String),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum BindTarget {
+	Event(String),
+	Alias(String),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Binding {
+	pub target: BindTarget,
+	pub param: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Setter {
+	pub set: String,
+	pub bindings: Vec<Binding>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct RuntimeInputEvent {
+	pub name: String,
+	pub legacy_icon: Icon,
+	pub lock_icon: Icon,
+	pub description: String,
+	pub tooltip_value: String,
+	pub legacy_interaction: InteractionType,
+	pub lock_interaction: InteractionType,
+	pub value: String,
+	pub units: String,
+	pub init: String,
+	pub watch: Vec<WatchedVariable>,
+	pub inc: Setter,
+	pub dec: Setter,
+	pub set: Setter,
 }
 
 #[derive(Debug)]

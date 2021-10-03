@@ -264,7 +264,6 @@ lazy_static! {
 		m.insert("break", TokenType::Break);
 		m.insert("switch", TokenType::Switch);
 		m.insert("let", TokenType::Let);
-		m.insert("alias", TokenType::Alias);
 		m.insert("none", TokenType::None);
 		m.insert("lods", TokenType::Lods);
 		m.insert("behavior", TokenType::Behavior);

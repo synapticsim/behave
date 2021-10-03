@@ -7,6 +7,7 @@ use crate::ast::{
 	AssignmentTarget,
 	BehaviorExpression,
 	Component,
+	InputEvent,
 	Interaction,
 	Location,
 	OtherType,
@@ -1232,7 +1233,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 			},
 		);
 		let lock_tooltip_title = Box::new(
-			if let Some(callback) = args_iter.clone().find(|val| val.0 .0 == "lock_tooltip_title") {
+			if let Some(callback) = args_iter.clone().find(|val| val.0 .0 == "tooltip_title") {
 				callback.1.clone()
 			} else {
 				return Err(Diagnostic::new(Level::Error, "expected lock tooltip title")
@@ -1244,6 +1245,22 @@ impl<'a, 'b> Parser<'a, 'b> {
 				callback.1.clone()
 			} else {
 				return Err(Diagnostic::new(Level::Error, "expected lock tooltips")
+					.add_label(Label::primary("here", self.loc(range))));
+			},
+		);
+		let animated_tooltips = Box::new(
+			if let Some(callback) = args_iter.clone().find(|val| val.0 .0 == "animated_tooltips") {
+				callback.1.clone()
+			} else {
+				return Err(Diagnostic::new(Level::Error, "expected animated tooltips")
+					.add_label(Label::primary("here", self.loc(range))));
+			},
+		);
+		let cursor_animated = Box::new(
+			if let Some(callback) = args_iter.clone().find(|val| val.0 .0 == "cursor_animated") {
+				callback.1.clone()
+			} else {
+				return Err(Diagnostic::new(Level::Error, "expected cursor_animated")
 					.add_label(Label::primary("here", self.loc(range))));
 			},
 		);
@@ -1260,6 +1277,14 @@ impl<'a, 'b> Parser<'a, 'b> {
 		} else {
 			None
 		};
+		let drag_mode = Box::new(
+			if let Some(callback) = args_iter.clone().find(|val| val.0 .0 == "drag_mode") {
+				callback.1.clone()
+			} else {
+				return Err(Diagnostic::new(Level::Error, "expected drag_mode")
+					.add_label(Label::primary("here", self.loc(range))));
+			},
+		);
 
 		Ok((
 			Interaction {
@@ -1271,8 +1296,11 @@ impl<'a, 'b> Parser<'a, 'b> {
 				lock_callback,
 				lock_tooltip_title,
 				lock_tooltips,
+				animated_tooltips,
+				cursor_animated,
 				can_lock,
 				node_to_highlight,
+				drag_mode,
 			},
 			range,
 		))
@@ -1311,6 +1339,125 @@ impl<'a, 'b> Parser<'a, 'b> {
 		});
 
 		Ok((Update { frequency, mode, code }, range))
+	}
+
+	fn parse_input_event(&mut self) -> Result<(InputEvent<'a>, Range<usize>), Diagnostic> {
+		self.struct_literal_allowed = false;
+		let name = Box::new(self.parse_expression(ExpressionParseMode::Normal)?);
+		self.struct_literal_allowed = true;
+		let args = self.parse_values(ExpressionParseMode::Normal)?;
+		let range = args.1.range;
+		let args_iter = args.0.iter();
+		let legacy_icon = Box::new(
+			if let Some(legacy_icon) = args_iter.clone().find(|val| val.0 .0 == "legacy_icon") {
+				legacy_icon.1.clone()
+			} else {
+				return Err(Diagnostic::new(Level::Error, "expected input event legacy icon")
+					.add_label(Label::primary("here", self.loc(range))));
+			},
+		);
+		let lock_icon = Box::new(
+			if let Some(lock_icon) = args_iter.clone().find(|val| val.0 .0 == "lock_icon") {
+				lock_icon.1.clone()
+			} else {
+				return Err(Diagnostic::new(Level::Error, "expected input event lock icon")
+					.add_label(Label::primary("here", self.loc(range))));
+			},
+		);
+		let description = Box::new(
+			if let Some(description) = args_iter.clone().find(|val| val.0 .0 == "description") {
+				description.1.clone()
+			} else {
+				return Err(Diagnostic::new(Level::Error, "expected input event description")
+					.add_label(Label::primary("here", self.loc(range))));
+			},
+		);
+		let tooltip_value = Box::new(
+			if let Some(tooltip_value) = args_iter.clone().find(|val| val.0 .0 == "tooltip_value") {
+				tooltip_value.1.clone()
+			} else {
+				return Err(Diagnostic::new(Level::Error, "expected input event tooltip value")
+					.add_label(Label::primary("here", self.loc(range))));
+			},
+		);
+		let legacy_interaction = Box::new(
+			if let Some(legacy_interaction) = args_iter.clone().find(|val| val.0 .0 == "legacy_interaction") {
+				legacy_interaction.1.clone()
+			} else {
+				return Err(Diagnostic::new(Level::Error, "expected input event legacy interaction")
+					.add_label(Label::primary("here", self.loc(range))));
+			},
+		);
+		let lock_interaction = Box::new(
+			if let Some(lock_interaction) = args_iter.clone().find(|val| val.0 .0 == "lock_interaction") {
+				lock_interaction.1.clone()
+			} else {
+				return Err(Diagnostic::new(Level::Error, "expected input event lock interaction")
+					.add_label(Label::primary("here", self.loc(range))));
+			},
+		);
+		let value = Box::new(if let Some(value) = args_iter.clone().find(|val| val.0 .0 == "value") {
+			value.1.clone()
+		} else {
+			return Err(Diagnostic::new(Level::Error, "expected input event value")
+				.add_label(Label::primary("here", self.loc(range))));
+		});
+		let units = Box::new(if let Some(units) = args_iter.clone().find(|val| val.0 .0 == "units") {
+			units.1.clone()
+		} else {
+			return Err(Diagnostic::new(Level::Error, "expected input event units")
+				.add_label(Label::primary("here", self.loc(range))));
+		});
+		let init = Box::new(if let Some(init) = args_iter.clone().find(|val| val.0 .0 == "init") {
+			init.1.clone()
+		} else {
+			return Err(Diagnostic::new(Level::Error, "expected input event init")
+				.add_label(Label::primary("here", self.loc(range))));
+		});
+		let watch = Box::new(if let Some(watch) = args_iter.clone().find(|val| val.0 .0 == "watch") {
+			watch.1.clone()
+		} else {
+			return Err(Diagnostic::new(Level::Error, "expected input event watch")
+				.add_label(Label::primary("here", self.loc(range))));
+		});
+		let inc = Box::new(if let Some(inc) = args_iter.clone().find(|val| val.0 .0 == "inc") {
+			inc.1.clone()
+		} else {
+			return Err(Diagnostic::new(Level::Error, "expected input event increment")
+				.add_label(Label::primary("here", self.loc(range))));
+		});
+		let dec = Box::new(if let Some(dec) = args_iter.clone().find(|val| val.0 .0 == "dec") {
+			dec.1.clone()
+		} else {
+			return Err(Diagnostic::new(Level::Error, "expected input event decrement")
+				.add_label(Label::primary("here", self.loc(range))));
+		});
+		let set = Box::new(if let Some(set) = args_iter.clone().find(|val| val.0 .0 == "set") {
+			set.1.clone()
+		} else {
+			return Err(Diagnostic::new(Level::Error, "expected input event set")
+				.add_label(Label::primary("here", self.loc(range))));
+		});
+
+		Ok((
+			InputEvent {
+				name,
+				legacy_icon,
+				lock_icon,
+				description,
+				tooltip_value,
+				legacy_interaction,
+				lock_interaction,
+				value,
+				units,
+				init,
+				watch,
+				inc,
+				dec,
+				set,
+			},
+			range,
+		))
 	}
 
 	fn parse_path(&mut self) -> Result<Path<'a>, Diagnostic> {
@@ -1431,6 +1578,13 @@ impl<'a, 'b> Parser<'a, 'b> {
 								Ok(Expression(
 									ExpressionType::Behavior(BehaviorExpression::Update(update.0)),
 									p.loc(merge_range!(next.1, update.1)),
+								))
+							},
+							"inputevent" => {
+								let event = p.parse_input_event()?;
+								Ok(Expression(
+									ExpressionType::Behavior(BehaviorExpression::InputEvent(event.0)),
+									p.loc(merge_range!(next.1, event.1)),
 								))
 							},
 							_ => Err(Diagnostic::new(Level::Error, "expected behavior expression")

@@ -3,17 +3,22 @@ use std::collections::HashSet;
 use gltf::json::Root;
 use uuid::Uuid;
 
-use crate::ast::{Behavior, InteractionMode, LODs, Location};
+use crate::ast::{Behavior, Icon, InteractionMode, InteractionTip, LODs, Location};
 use crate::diagnostic::{Diagnostic, Label, Level};
 use crate::evaluation::runtime::ExpressionEvaluator;
 use crate::evaluation::value::{
+	BindTarget,
 	Cursors,
+	DragMode,
+	InteractionType,
 	RuntimeAnimation,
 	RuntimeComponent,
 	RuntimeEvent,
+	RuntimeInputEvent,
 	RuntimeInteraction,
 	RuntimeUpdate,
 	TemplateValue,
+	WatchedVariable,
 };
 use crate::items::ItemMap;
 use crate::output::xml::XMLWriter;
@@ -145,6 +150,7 @@ fn generate_template_values<'a>(
 			TemplateValue::Events(name, events) => generate_events(name, events, gltfs, writer, errors),
 			TemplateValue::Update(update) => generate_update(update, writer),
 			TemplateValue::Block(values) => generate_template_values(values, gltfs, writer, errors),
+			TemplateValue::InputEvent(event) => generate_input_event(event, writer),
 		}
 	}
 }
@@ -350,8 +356,34 @@ fn generate_interaction(
 
 	writer.start_element("IMTooltipsInstances");
 	writer.start_element("IMDefault");
+
 	writer.start_element("Animated");
+	writer.start_element("AnimRefID");
+	writer.data("0");
 	writer.end_element();
+	if interaction.cursor_animated {
+		writer.start_element_attrib("AnimCursor", [("min", "0"), ("max", "1")]);
+		writer.data("1.0");
+		writer.end_element();
+	}
+	for tooltip in interaction.animated_tooltips {
+		match (tooltip.percent, tooltip.cursor) {
+			(Some(percent), Some(cursor)) => writer.start_element_attrib(
+				"AnimTooltip",
+				[
+					("percent", percent.to_string()),
+					("cursor", cursor.to_string().to_string()),
+				],
+			),
+			(Some(percent), None) => writer.start_element_attrib("AnimTooltip", [("percent", percent.to_string())]),
+			(None, Some(cursor)) => writer.start_element_attrib("AnimTooltip", [("cursor", cursor.to_string())]),
+			(None, None) => writer.start_element("AnimTooltip"),
+		}
+		writer.data(tooltip.value);
+		writer.end_element();
+	}
+	writer.end_element();
+
 	writer.end_element();
 
 	writer.start_element("IMDrag");
@@ -418,15 +450,86 @@ fn generate_interaction(
 	writer.end_element();
 	writer.end_element();
 
-	writer.start_element("DragMode");
-	writer.data("Default");
-	writer.end_element();
-	writer.start_element("DragAxis");
-	writer.data("Any");
-	writer.end_element();
-	writer.start_element("DragScalar");
-	writer.data("1");
-	writer.end_element();
+	match interaction.drag_mode {
+		DragMode::Normal(normal) => {
+			writer.start_element("DragMode");
+			writer.data("Default");
+			writer.end_element();
+			writer.start_element("DragAxis");
+			writer.data(normal.axis.to_string());
+			writer.end_element();
+			writer.start_element("DragScalar");
+			writer.data(normal.scalar.to_string());
+			writer.end_element();
+		},
+		DragMode::Trajectory(trajectory) => {
+			writer.start_element("DragMode");
+			writer.data("Trajectory");
+			writer.end_element();
+
+			let mut lods_without = Vec::new();
+			for gltf in gltfs.iter().enumerate() {
+				if !gltf.1.animations.contains(&trajectory.anim) {
+					lods_without.push(gltf.0);
+				}
+			}
+
+			if lods_without.len() == gltfs.len() {
+				errors.push(Diagnostic::new(
+					Level::Error,
+					format!("animation `{}` does not exist in any LOD", trajectory.anim),
+				))
+			} else {
+				for lod in lods_without {
+					errors.push(
+						Diagnostic::new(Level::Warning, "LOD does not have animation").add_label(Label::primary(
+							format!("animation `{}` does not exist in LOD", trajectory.anim),
+							gltfs[lod].loc.clone(),
+						)),
+					)
+				}
+			}
+
+			writer.start_element("DragAnimName");
+			writer.data(trajectory.anim);
+			writer.end_element();
+
+			let mut lods_without = Vec::new();
+			for gltf in gltfs.iter().enumerate() {
+				if !gltf.1.nodes.contains(&trajectory.node) {
+					lods_without.push(gltf.0);
+				}
+			}
+
+			if lods_without.len() == gltfs.len() {
+				errors.push(Diagnostic::new(
+					Level::Error,
+					format!("node `{}` does not exist in any LOD", trajectory.node),
+				))
+			} else {
+				for lod in lods_without {
+					errors.push(
+						Diagnostic::new(Level::Warning, "LOD does not have node").add_label(Label::primary(
+							format!("node `{}` does not exist in LOD", trajectory.node),
+							gltfs[lod].loc.clone(),
+						)),
+					)
+				}
+			}
+
+			writer.start_element("DragNodeId");
+			writer.data(trajectory.node);
+			writer.end_element();
+
+			writer.start_element("DragAnimSynced");
+			writer.data(trajectory.sync.to_string());
+			writer.end_element();
+
+			writer.start_element("DragUseAnimLag");
+			writer.data(trajectory.use_lag.to_string());
+			writer.end_element();
+		},
+	}
 
 	writer.start_element("DragFlagsLockable");
 	writer.data("LeftDrag+RightDrag+MiddleDrag");
@@ -511,5 +614,213 @@ fn generate_update(update: RuntimeUpdate, writer: &mut XMLWriter) {
 		],
 	);
 	writer.data(update.code);
+	writer.end_element();
+}
+
+fn generate_input_event(event: RuntimeInputEvent, writer: &mut XMLWriter) {
+	writer.start_element_attrib("InputEvent", [("ID", format!("{}_Event", event.name))]);
+	writer.start_element("Presets");
+	writer.start_element_attrib("Preset", [("ID", event.name)]);
+
+	writer.start_element("Tooltip");
+	writer.start_element("Icon");
+	writer.data(match event.legacy_icon {
+		Icon::MoveAxisX => "MOVE_AXIS_X",
+		Icon::MoveAxis => "MOVE_AXIS",
+		Icon::MoveAxisY => "MOVE_AXIS_Y",
+		Icon::MoveX => "MOVE_X",
+		Icon::MoveY => "MOVE_Y",
+		Icon::Pull => "PULL",
+		Icon::Push => "PUSH",
+		Icon::Rotate => "ROTATE",
+	});
+	writer.end_element();
+	writer.start_element("IconLockable");
+	writer.data(match event.lock_icon {
+		Icon::MoveAxisX => "MOVE_AXIS_X",
+		Icon::MoveAxis => "MOVE_AXIS",
+		Icon::MoveAxisY => "MOVE_AXIS_Y",
+		Icon::MoveX => "MOVE_X",
+		Icon::MoveY => "MOVE_Y",
+		Icon::Pull => "PULL",
+		Icon::Push => "PUSH",
+		Icon::Rotate => "ROTATE",
+	});
+	writer.end_element();
+	writer.start_element_attrib("TTDescription", [("RPN", "True")]);
+	writer.data(event.description);
+	writer.end_element();
+	writer.start_element_attrib("TTValue", [("RPN", "True")]);
+	writer.data(event.tooltip_value);
+	writer.end_element();
+	match event.legacy_interaction {
+		InteractionType::Inbuilt(tips) => {
+			writer.start_element("Interaction");
+			writer.data(
+				tips.into_iter()
+					.map(|tip| match tip {
+						InteractionTip::XAxis => "X_AXIS",
+						InteractionTip::XAxisLeft => "X_AXIS_LEFT",
+						InteractionTip::XAxisRight => "X_AXIS_RIGHT",
+						InteractionTip::YAxis => "Y_AXIS",
+						InteractionTip::YAxisUp => "Y_AXIS_UP",
+						InteractionTip::YAxisDown => "Y_AXIS_DOWN",
+						InteractionTip::PrimaryUp => "PRIMARY_UP",
+						InteractionTip::PrimaryDown => "PRIMARY_DOWN",
+						InteractionTip::SecondaryUp => "SECONDARY_UP",
+						InteractionTip::SecondaryDown => "SECONDARY_DOWN",
+						InteractionTip::TertiaryUp => "TERTIARY_UP",
+						InteractionTip::TertiaryDown => "TERTIARY_DOWN",
+						InteractionTip::Lock => "LOCK",
+						InteractionTip::Unlock => "UNLOCK",
+						InteractionTip::Increase => "INCREASE",
+						InteractionTip::Decrease => "DECREASE",
+					})
+					.collect::<Vec<_>>()
+					.join("+"),
+			)
+		},
+		InteractionType::Custom(s) => {
+			writer.start_element_attrib("TTInteraction", [("RPN", "True")]);
+			writer.data(s);
+		},
+	}
+	writer.end_element();
+	match event.lock_interaction {
+		InteractionType::Inbuilt(tips) => {
+			writer.start_element("InteractionLockable");
+			writer.data(
+				tips.into_iter()
+					.map(|tip| match tip {
+						InteractionTip::XAxis => "X_AXIS",
+						InteractionTip::XAxisLeft => "X_AXIS_LEFT",
+						InteractionTip::XAxisRight => "X_AXIS_RIGHT",
+						InteractionTip::YAxis => "Y_AXIS",
+						InteractionTip::YAxisUp => "Y_AXIS_UP",
+						InteractionTip::YAxisDown => "Y_AXIS_DOWN",
+						InteractionTip::PrimaryUp => "PRIMARY_UP",
+						InteractionTip::PrimaryDown => "PRIMARY_DOWN",
+						InteractionTip::SecondaryUp => "SECONDARY_UP",
+						InteractionTip::SecondaryDown => "SECONDARY_DOWN",
+						InteractionTip::TertiaryUp => "TERTIARY_UP",
+						InteractionTip::TertiaryDown => "TERTIARY_DOWN",
+						InteractionTip::Lock => "LOCK",
+						InteractionTip::Unlock => "UNLOCK",
+						InteractionTip::Increase => "INCREASE",
+						InteractionTip::Decrease => "DECREASE",
+					})
+					.collect::<Vec<_>>()
+					.join("+"),
+			)
+		},
+		InteractionType::Custom(s) => {
+			writer.start_element_attrib("TTInteractionLockable", [("RPN", "True")]);
+			writer.data(s);
+		},
+	}
+	writer.end_element();
+	writer.end_element();
+
+	writer.start_element("Value");
+	writer.start_element("Units");
+	writer.data(event.units);
+	writer.end_element();
+	writer.start_element("Code");
+	writer.data(event.value);
+	writer.end_element();
+	writer.start_element("Init");
+	writer.data(event.init);
+	writer.end_element();
+	writer.end_element();
+
+	writer.start_element("WatchVars");
+	for watch in event.watch {
+		match watch {
+			WatchedVariable::Local(s) => writer.element("LocalVar", [("ID", s)]),
+			WatchedVariable::Sim(s) => writer.element("SimVar", [("ID", s)]),
+		}
+	}
+	writer.end_element();
+
+	writer.start_element("Inc");
+	writer.start_element("Code");
+	writer.data(event.inc.set);
+	writer.end_element();
+	writer.start_element("Parameters");
+	writer.start_element_attrib("Param", [("Type", "Float"), ("RPN", "True")]);
+	writer.data("p0");
+	writer.end_element();
+	writer.end_element();
+	writer.start_element("Bindings");
+	for binding in event.inc.bindings {
+		writer.start_element_attrib(
+			"Binding",
+			[match binding.target {
+				BindTarget::Event(s) => ("EventID", s),
+				BindTarget::Alias(s) => ("Alias", s),
+			}],
+		);
+		writer.start_element_attrib("Param", [("Type", "Float"), ("RPN", "True")]);
+		writer.data(binding.param);
+		writer.end_element();
+		writer.end_element();
+	}
+	writer.end_element();
+	writer.end_element();
+
+	writer.start_element("Dec");
+	writer.start_element("Code");
+	writer.data(event.dec.set);
+	writer.end_element();
+	writer.start_element("Parameters");
+	writer.start_element_attrib("Param", [("Type", "Float"), ("RPN", "True")]);
+	writer.data("p0");
+	writer.end_element();
+	writer.end_element();
+	writer.start_element("Bindings");
+	for binding in event.dec.bindings {
+		writer.start_element_attrib(
+			"Binding",
+			[match binding.target {
+				BindTarget::Event(s) => ("EventID", s),
+				BindTarget::Alias(s) => ("Alias", s),
+			}],
+		);
+		writer.start_element_attrib("Param", [("Type", "Float"), ("RPN", "True")]);
+		writer.data(binding.param);
+		writer.end_element();
+		writer.end_element();
+	}
+	writer.end_element();
+	writer.end_element();
+
+	writer.start_element("Set");
+	writer.start_element("Code");
+	writer.data(event.set.set);
+	writer.end_element();
+	writer.start_element("Parameters");
+	writer.start_element_attrib("Param", [("Type", "Float"), ("RPN", "True")]);
+	writer.data("p0");
+	writer.end_element();
+	writer.end_element();
+	writer.start_element("Bindings");
+	for binding in event.set.bindings {
+		writer.start_element_attrib(
+			"Binding",
+			[match binding.target {
+				BindTarget::Event(s) => ("EventID", s),
+				BindTarget::Alias(s) => ("Alias", s),
+			}],
+		);
+		writer.start_element_attrib("Param", [("Type", "Float"), ("RPN", "True")]);
+		writer.data(binding.param);
+		writer.end_element();
+		writer.end_element();
+	}
+	writer.end_element();
+	writer.end_element();
+
+	writer.end_element();
+	writer.end_element();
 	writer.end_element();
 }
