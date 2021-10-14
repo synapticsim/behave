@@ -10,7 +10,7 @@ It converts the hard-to-understand XML into a declarative language, with a power
 1. XML is a terrible language to write 'code' in.
 2. RPN is a relic from the early 2000s, and is extremely difficult to understand due to its stack-based nature.
 3. The error reporting in the XML compiler is terrible. No really. If an error is in an included file, 
-good luck figuring out which one. Oh? you wanted a line number? LOL NO.
+good luck figuring out which one. Oh? you wanted a line number? Figure it out yourself.
 
 ## Getting Started
 
@@ -20,6 +20,4 @@ good luck figuring out which one. Oh? you wanted a line number? LOL NO.
 ## Contributing
 
 The `behave` compiler is licensed under the GNU GPLv3.
-
-The current quality of code is extremely terrible, which is why `behave` is still in very early alpha.
-Please don't scream at me, I warned you. However, feel free to improve the code, add features, and submit pull requests.
+Feel free to improve the code, add features, and submit pull requests.

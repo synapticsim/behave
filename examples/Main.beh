@@ -1,16 +1,11 @@
-import Imported;
+// mod Imported;
 
-lods {
-    0 -> "SomeModel.gltf",
-    50 -> "SomeModel2.gltf"
+lods {}
+
+fn very_useful_function(a: int) -> (int, int, int) {
+    (10 + 10 * 10, 10 / 5, a)
 }
 
-behavior {
-    use Elevators {
-        id: ElevatorID.Left
-    }
-
-    use Elevators {
-        id: ElevatorID.Right
-    }
+rpn fn something() {
+    (L:"MyLVar", bool)
 }

@@ -1,22 +1,11 @@
-#![feature(try_trait_v2)]
+use crate::{
+	diagnostic::{Diagnostic, Diagnostics},
+	syntax::parser::Parser,
+};
 
-use diagnostic::Diagnostic;
-use lexer::Lexer;
-use parser::{Parser, ParserMode};
-
-use crate::ast::{ASTTree, ASTType, AST};
-use crate::diagnostic::Level;
-use crate::items::ItemMap;
-
-mod ast;
 pub mod diagnostic;
-mod evaluation;
-mod items;
-mod lexer;
-mod output;
-mod parser;
-mod resolve;
-mod token;
+// mod output;
+pub mod syntax;
 
 /// The result of a compilation.
 pub struct CompileResult {
@@ -26,11 +15,11 @@ pub struct CompileResult {
 	pub diagnostics: Vec<Diagnostic>,
 }
 
-#[derive(Debug)]
+#[derive(Clone)]
 /// A `behave` source file.
 pub struct SourceFile {
 	/// The path of the source file.
-	pub path: Vec<String>,
+	pub path: String,
 	/// The contents of the source file.
 	pub contents: String,
 }
@@ -38,101 +27,21 @@ pub struct SourceFile {
 /// Compile a `behave` project.
 ///
 /// # Parameters:
-/// `main_file`: The main file of the project.
-/// `files`: Slice of all the other files in the project.
-/// `loader`: File loader that loads files in the output directory for GLTF verification.
-pub fn compile<F>(main_file: &SourceFile, files: &[SourceFile], loader: F) -> CompileResult
+/// `file`: The main file of the project.
+/// `source_loader`: File loader that loads files relative to the main file of the project.
+/// `out_loader`: File loader that loads files in the output directory for GLTF verification.
+pub fn compile<'a, S, O>(file: &'a SourceFile, mut source_loader: S, out_loader: O) -> CompileResult
 where
-	F: FnMut(&str) -> Option<String>,
+	S: FnMut(&[&str]) -> Option<&'a SourceFile>,
+	O: FnMut(&str) -> Option<String>,
 {
-	let mut diagnostics = Vec::new();
+	let mut diagnostics = Diagnostics::new();
 
-	let mut item_map = ItemMap::new();
-	let (mut main, mut others) = if let Ok(asts) = parse(main_file, files, &mut item_map, &mut diagnostics) {
-		asts
-	} else {
-		return CompileResult {
-			compiled: None,
-			diagnostics,
-		};
-	};
-
-	if let Err(diag) = resolve::resolve(&mut main, &mut others, &mut item_map) {
-		diagnostics.extend(diag);
-		return CompileResult {
-			compiled: None,
-			diagnostics,
-		};
-	}
-
-	let (lods, behavior) = if let ASTType::Main(lods, behavior) = main.ast_data {
-		(lods, behavior)
-	} else {
-		unreachable!()
-	};
-
-	let s = match output::generate(loader, &item_map, lods, behavior) {
-		Ok(s) => Some(s),
-		Err(err) => {
-			diagnostics.extend(err);
-			None
-		},
-	};
+	let ast = Parser::new(file, &[], &mut source_loader, &mut diagnostics).main();
+	println!("{:#?}", ast);
 
 	CompileResult {
-		compiled: s,
-		diagnostics,
+		compiled: None,
+		diagnostics: diagnostics.get(),
 	}
-}
-
-fn parse<'a>(
-	main_file: &'a SourceFile, files: &'a [SourceFile], item_map: &mut ItemMap<'a>, diagnostics: &mut Vec<Diagnostic>,
-) -> Result<(AST<'a>, ASTTree<'a>), ()> {
-	let main = match Parser::new(
-		ParserMode::MainFile,
-		&main_file.path,
-		Lexer::new(&main_file.path, &main_file.contents),
-		item_map,
-		diagnostics,
-	)
-	.parse()
-	{
-		Some(ast) => ast,
-		None => return Err(()),
-	};
-
-	let mut tree = ASTTree::new();
-	for file in files {
-		if !tree.add_ast(
-			&file.path,
-			match Parser::new(
-				ParserMode::ImportedFile,
-				&file.path,
-				Lexer::new(&file.path, &file.contents),
-				item_map,
-				diagnostics,
-			)
-			.parse()
-			{
-				Some(ast) => ast,
-				None => return Err(()),
-			},
-		) {
-			diagnostics.push(Diagnostic::new(
-				Level::Error,
-				format!("file '{}' is invalid", {
-					let mut s = String::new();
-					let mut iter = file.path.iter();
-					s += &iter.next().unwrap();
-					while let Some(p) = iter.next() {
-						s.push('.');
-						s += &p;
-					}
-					s
-				}),
-			))
-		}
-	}
-
-	Ok((main, tree))
 }

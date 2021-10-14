@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 
-use behave::diagnostic::{Diagnostic, LabelType, Level};
-use behave::SourceFile;
+use behave::{
+	diagnostic::{Diagnostic, LabelType, Level},
+	SourceFile,
+};
 use codespan_reporting::{
 	diagnostic::{self, Label, LabelStyle, Severity},
 	files::SimpleFiles,
@@ -17,22 +19,7 @@ pub fn display_diagnostics(file_map: Vec<SourceFile>, diagnostics: Vec<Diagnosti
 		let mut files = SimpleFiles::new();
 		let mut id_map = HashMap::new();
 		for file in file_map {
-			id_map.insert(
-				file.path.clone(),
-				files.add(
-					{
-						let mut s = String::new();
-						let mut iter = file.path.into_iter();
-						s += &iter.next().unwrap();
-						while let Some(p) = iter.next() {
-							s.push('.');
-							s += &p;
-						}
-						s
-					},
-					file.contents,
-				),
-			);
+			id_map.insert(file.path.clone(), files.add(file.path, file.contents));
 		}
 
 		(files, id_map)
@@ -55,12 +42,12 @@ pub fn display_diagnostics(file_map: Vec<SourceFile>, diagnostics: Vec<Diagnosti
 				.labels
 				.into_iter()
 				.map(|label| Label {
-					style: match label.label_type {
+					style: match label.ty {
 						LabelType::Primary => LabelStyle::Primary,
 						LabelType::Secondary => LabelStyle::Secondary,
 					},
-					file_id: id_map[&label.file],
-					range: label.range,
+					file_id: id_map[&label.loc.file],
+					range: label.loc.span.start as usize..label.loc.span.end as usize,
 					message: label.message,
 				})
 				.collect(),

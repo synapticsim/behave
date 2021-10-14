@@ -1,10 +1,47 @@
 use std::ops::Range;
 
-use crate::ast::Location;
-use crate::token::Token;
+pub struct Diagnostics {
+	diagnostics: Vec<Diagnostic>,
+	error: bool,
+}
+
+impl Diagnostics {
+	pub fn new() -> Self {
+		Self {
+			diagnostics: Vec::new(),
+			error: false,
+		}
+	}
+
+	pub fn add(&mut self, diagnostic: Diagnostic) {
+		if diagnostic.level == Level::Error {
+			self.error = true;
+		}
+		self.diagnostics.push(diagnostic);
+	}
+
+	pub fn success(&self) -> bool { !self.error }
+
+	pub fn get(self) -> Vec<Diagnostic> { self.diagnostics }
+}
+
+/// A location in source-code.
+pub struct Location {
+	pub span: Range<u32>,
+	pub file: String,
+}
+
+impl Location {
+	pub fn new(span: Range<u32>, file: &[impl AsRef<str>]) -> Self {
+		Self {
+			span,
+			file: file.into_iter().map(|comp| comp.as_ref().to_string()).collect(),
+		}
+	}
+}
 
 /// The type of a label.
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Clone, Copy, PartialEq)]
 pub enum LabelType {
 	/// A primary label that shows the primary cause of a diagnostic.
 	Primary,
@@ -13,49 +50,35 @@ pub enum LabelType {
 }
 
 /// A label in source code.
-#[derive(Clone, Debug)]
 pub struct Label {
 	/// The type of the label.
-	pub label_type: LabelType,
+	pub ty: LabelType,
 	/// The message associated with the label.
 	pub message: String,
-	/// The file that the label belongs to.
-	pub file: Vec<String>,
-	/// The byte-range of the label.
-	pub range: Range<usize>,
+	/// The location of this diagnostic.
+	pub loc: Location,
 }
 
 impl Label {
 	pub fn primary(message: impl ToString, loc: Location) -> Self {
 		Label {
-			label_type: LabelType::Primary,
+			ty: LabelType::Primary,
 			message: message.to_string(),
-			file: loc.file.to_vec().into_iter().map(|s| s.to_string()).collect(),
-			range: loc.range,
+			loc,
 		}
 	}
 
 	pub fn secondary(message: impl ToString, loc: Location) -> Self {
 		Label {
-			label_type: LabelType::Secondary,
+			ty: LabelType::Secondary,
 			message: message.to_string(),
-			file: loc.file.to_vec().into_iter().map(|s| s.to_string()).collect(),
-			range: loc.range,
-		}
-	}
-
-	pub fn unexpected(file: &[impl ToString + Clone], token: &Token) -> Self {
-		Label {
-			label_type: LabelType::Primary,
-			message: format!("found `{}`", token.to_type()),
-			file: file.to_vec().into_iter().map(|s| s.to_string()).collect(),
-			range: token.1.clone(),
+			loc,
 		}
 	}
 }
 
 /// The level of a diagnostic.
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Clone, Copy, PartialEq)]
 pub enum Level {
 	Error,
 	Warning,
@@ -64,7 +87,6 @@ pub enum Level {
 }
 
 /// A diagnostic.
-#[derive(Clone, Debug)]
 pub struct Diagnostic {
 	/// The diagnostic message.
 	pub message: String,
