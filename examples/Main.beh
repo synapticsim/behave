@@ -1,11 +1,5 @@
-// mod Imported;
+mod Imported;
 
 lods {}
 
-fn very_useful_function(a: int) -> (int, int, int) {
-    (10 + 10 * 10, 10 / 5, a)
-}
-
-rpn fn something() {
-    (L:"MyLVar", bool)
-}
+behavior {}

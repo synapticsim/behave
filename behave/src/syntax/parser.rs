@@ -3,6 +3,7 @@ use crate::{
 	syntax::{
 		ast::{
 			Arm,
+			BehExprKind,
 			BinOp,
 			BinOpKind,
 			Block,
@@ -143,41 +144,35 @@ where
 
 	fn lods(&mut self) -> Option<(Vec<(Expr<'a>, Expr<'a>)>, Loc<'a>)> {
 		self.delim_list(TokenKind::Comma, Delimiter::Brace, |p| {
-			let size = p.expr(ExprMode::Normal, true);
+			let size = p.expr_must(ExprMode::Normal, true);
 			expect!(p, TokenKind::Arrow, err = "expected `->`");
-			let gltf = p.expr(ExprMode::Normal, true);
+			let gltf = p.expr_must(ExprMode::Normal, true);
 			let span = size.loc + gltf.loc;
 			Some(((size, gltf), span))
 		})
 	}
 
-	fn expr(&mut self, mode: ExprMode, struct_literal: bool) -> Expr<'a> {
+	fn expr(&mut self, mode: ExprMode, struct_literal: bool) -> Option<Expr<'a>> {
 		self.precedence(precedence::ASSIGNMENT, mode, struct_literal)
 	}
 
-	fn precedence(&mut self, precedence: u8, mode: ExprMode, struct_literal: bool) -> Expr<'a> {
-		let tok = if let Some(tok) = self.peek() {
-			tok
-		} else {
-			return Expr {
-				node: ExprKind::Err,
-				loc: self.loc(Default::default()),
-			};
-		};
-		let mut expr = if let Some(prefix) = Self::prefix(tok) {
+	fn expr_must(&mut self, mode: ExprMode, struct_literal: bool) -> Expr<'a> {
+		self.precedence_must(precedence::ASSIGNMENT, mode, struct_literal)
+	}
+
+	fn precedence(&mut self, precedence: u8, mode: ExprMode, struct_literal: bool) -> Option<Expr<'a>> {
+		let tok = if let Some(tok) = self.peek() { tok } else { return None };
+		let mut expr = if let Some(prefix) = Self::prefix(tok, mode) {
 			prefix(self, mode, struct_literal)
 		} else {
-			return Expr {
-				node: ExprKind::Err,
-				loc: self.loc(tok.span),
-			};
+			return None;
 		};
 
 		loop {
 			let tok = if let Some(next) = self.peek() {
 				next
 			} else {
-				return expr;
+				break;
 			};
 
 			if let Some(infix) = Self::infix(tok) {
@@ -189,14 +184,40 @@ where
 				expr = infix.0(self, expr, mode, struct_literal);
 				expr.loc += loc;
 			} else {
-				return expr;
+				break;
 			}
 		}
 
-		expr
+		Some(expr)
 	}
 
-	fn prefix(tok: Token) -> Option<fn(&mut Self, mode: ExprMode, struct_literal: bool) -> Expr<'a>> {
+	fn precedence_must(&mut self, precedence: u8, mode: ExprMode, struct_literal: bool) -> Expr<'a> {
+		if let Some(expr) = self.precedence(precedence, mode, struct_literal) {
+			expr
+		} else {
+			if let Some(tok) = self.peek() {
+				let loc = self.loc(tok.span);
+				self.diagnostics.add(
+					Diagnostic::new(Level::Error, "expected expression").add_label(Label::primary("", loc.into())),
+				);
+				Expr {
+					node: ExprKind::Err,
+					loc,
+				}
+			} else {
+				self.diagnostics.add(Diagnostic::new(
+					Level::Error,
+					format!("unexpected end of file `{}`", self.file),
+				));
+				Expr {
+					node: ExprKind::Err,
+					loc: self.loc(Default::default()),
+				}
+			}
+		}
+	}
+
+	fn prefix(tok: Token, mode: ExprMode) -> Option<fn(&mut Self, mode: ExprMode, struct_literal: bool) -> Expr<'a>> {
 		Some(match tok.kind {
 			TokenKind::None => |p, _, _| {
 				let span = p.next().expect("tried to parse none at <eof>").span;
@@ -244,14 +265,10 @@ where
 					}
 				} else {
 					let mut loc = p.loc(tok.span);
-					let value = p.expr(mode, struct_allowed);
-					let value = if let ExprKind::Err = value.node {
-						None
-					} else {
-						loc += value.loc;
-						Some(value)
-					}
-					.map(|expr| Box::new(expr));
+					let value = p.expr(mode, struct_allowed).map(|expr| {
+						loc += expr.loc;
+						Box::new(expr)
+					});
 
 					Expr {
 						node: ExprKind::Ret(value),
@@ -282,7 +299,7 @@ where
 			TokenKind::Switch => Self::switch,
 			TokenKind::Ref => |p, mode, struct_literal| {
 				let tok = p.next().expect("tried to parse ref at <eof>");
-				let expr = p.precedence(precedence::UNARY, mode, struct_literal);
+				let expr = p.precedence_must(precedence::UNARY, mode, struct_literal);
 				let expr = Expr {
 					loc: expr.loc + tok.span,
 					node: ExprKind::Ref(Box::new(expr)),
@@ -297,12 +314,172 @@ where
 
 				expr
 			},
-			TokenKind::Keyword(Keyword::Function) => |p, _, _| p.closure(ExprMode::Normal),
-			TokenKind::Ident if tok.data == "rpn" => |p, _, _| {
+			TokenKind::Keyword(Keyword::Function) => |p, _, s| p.closure(ExprMode::Normal, s),
+			TokenKind::Ident if tok.data == "rpn" => |p, _, s| {
 				let span = p.next().expect("tried to parse closure at <eof>").span;
-				let mut expr = p.closure(ExprMode::RPN);
+				let mut expr = p.closure(ExprMode::RPN, s);
 				expr.loc += span;
+				if let ExprKind::Func(decl, block) = expr.node {
+					expr.node = ExprKind::RPNFunc(decl, block)
+				} else {
+					unreachable!()
+				}
 				expr
+			},
+			TokenKind::Ident if mode == ExprMode::Behavior && tok.data == "component" => |p, _, _| {
+				let loc = p.next().expect("tried to parse component at <eof>").span;
+				let mut loc = p.loc(loc);
+				let name = p.expr_must(ExprMode::Normal, false);
+				loc += name.loc;
+				let node = if let Some(tok) = p.peek() {
+					match tok.kind {
+						TokenKind::Ident if tok.data == "on" => {
+							p.next();
+							let expr = p.expr_must(ExprMode::Normal, false);
+							loc += expr.loc;
+							Some(expr)
+						},
+						_ => None,
+					}
+				} else {
+					None
+				};
+				let block = p.block(ExprMode::Behavior);
+				loc += block.loc;
+
+				Expr {
+					node: ExprKind::BehExpr(Box::new(BehExprKind::Component(name, node, block))),
+					loc,
+				}
+			},
+			TokenKind::Ident if mode == ExprMode::Behavior && tok.data == "animation" => |p, _, _| {
+				let loc = p.next().expect("tried to parse animation at <eof>").span;
+				let mut loc = p.loc(loc);
+				let name = p.expr_must(ExprMode::Normal, false);
+				loc += name.loc;
+				Expr {
+					node: ExprKind::BehExpr(Box::new(BehExprKind::Animation(
+						name,
+						if let Some(fields) = p.struct_expr() {
+							loc += fields.1;
+							fields.0
+						} else {
+							p.diagnostics.add(
+								Diagnostic::new(Level::Error, "expected animation arguments")
+									.add_label(Label::primary("", loc.into())),
+							);
+							Vec::new()
+						},
+					))),
+					loc,
+				}
+			},
+			TokenKind::Ident if mode == ExprMode::Behavior && tok.data == "visibility" => |p, _, _| {
+				let loc = p.next().expect("tried to parse visibility at <eof>").span;
+				expect!(p, TokenKind::Op(Op::Eq), err = "expected `=`");
+				let expr = p.expr_must(ExprMode::Normal, true);
+				let loc = expr.loc + loc;
+				Expr {
+					node: ExprKind::BehExpr(Box::new(BehExprKind::Visibility(expr))),
+					loc,
+				}
+			},
+			TokenKind::Ident if mode == ExprMode::Behavior && tok.data == "emissive" => |p, _, _| {
+				let loc = p.next().expect("tried to parse emissive at <eof>").span;
+				expect!(p, TokenKind::Op(Op::Eq), err = "expected `=`");
+				let expr = p.expr_must(ExprMode::Normal, true);
+				let loc = expr.loc + loc;
+				Expr {
+					node: ExprKind::BehExpr(Box::new(BehExprKind::Emissive(expr))),
+					loc,
+				}
+			},
+			TokenKind::Ident if mode == ExprMode::Behavior && tok.data == "interaction" => |p, _, _| {
+				let loc = p.next().expect("tried to parse interaction at <eof>").span;
+				if let Some(fields) = p.struct_expr() {
+					Expr {
+						node: ExprKind::BehExpr(Box::new(BehExprKind::Interaction(fields.0))),
+						loc: fields.1 + loc,
+					}
+				} else {
+					let loc = p.loc(loc);
+					p.diagnostics.add(
+						Diagnostic::new(Level::Error, "expected interaction arguments")
+							.add_label(Label::primary("", loc.into())),
+					);
+					Expr {
+						node: ExprKind::Err,
+						loc,
+					}
+				}
+			},
+			TokenKind::Ident if mode == ExprMode::Behavior && tok.data == "events" => |p, _, _| {
+				let loc = p.next().expect("tried to parse events at <eof>").span;
+				let mut loc = p.loc(loc);
+				if let Some(tok) = p.peek() {
+					match tok.kind {
+						TokenKind::Ident if tok.data == "on" => {
+							p.next();
+						},
+						kind => {
+							p.diagnostics.add(
+								Diagnostic::new(Level::Error, "expected `on`")
+									.add_label(Label::primary(format!("found `{}`", kind), p.loc(tok.span).into())),
+							);
+						},
+					}
+				}
+				let on = p.precedence_must(precedence::OR, ExprMode::Normal, true);
+				loc += on.loc;
+				expect!(p, TokenKind::Op(Op::Eq), err = "expected `=`");
+				let events = p.expr_must(ExprMode::Normal, true);
+				loc += events.loc;
+
+				Expr {
+					node: ExprKind::BehExpr(Box::new(BehExprKind::Events(on, events))),
+					loc,
+				}
+			},
+			TokenKind::Ident if mode == ExprMode::Behavior && tok.data == "update" => |p, _, _| {
+				let loc = p.next().expect("tried to parse update at <eof>").span;
+				if let Some(fields) = p.struct_expr() {
+					Expr {
+						node: ExprKind::BehExpr(Box::new(BehExprKind::Update(fields.0))),
+						loc: fields.1 + loc,
+					}
+				} else {
+					let loc = p.loc(loc);
+					p.diagnostics.add(
+						Diagnostic::new(Level::Error, "expected update arguments")
+							.add_label(Label::primary("", loc.into())),
+					);
+					Expr {
+						node: ExprKind::Err,
+						loc,
+					}
+				}
+			},
+			TokenKind::Ident if mode == ExprMode::Behavior && tok.data == "inputevent" => |p, _, _| {
+				let loc = p.next().expect("tried to parse inputevent at <eof>").span;
+				let mut loc = p.loc(loc);
+				let name = p.expr_must(ExprMode::Normal, false);
+				loc += name.loc;
+				Expr {
+					node: ExprKind::BehExpr(Box::new(BehExprKind::InputEvent(
+						name,
+						if let Some(fields) = p.struct_expr() {
+							loc += fields.1;
+							fields.0
+						} else {
+							p.diagnostics.add(
+								Diagnostic::new(Level::Error, "expected inputevent arguments")
+									.add_label(Label::primary("", loc.into())),
+							);
+							Vec::new()
+						},
+					))),
+					loc,
+				}
 			},
 			TokenKind::Ident => |p, mode, literal| {
 				let path = if let Some(path) = p.path() {
@@ -314,20 +491,12 @@ where
 					};
 				};
 
-				let expr = if literal && peek!(p, TokenKind::OpenDelim(Delimiter::Brace)).is_some() {
-					if let Some(fields) = p.delim_list(TokenKind::Comma, Delimiter::Brace, |p| {
-						let tok = expect!(p, TokenKind::Ident, err = "expected field name")?;
-						expect!(p, TokenKind::Colon, err = "expected `colon`");
-						let expr = p.expr(mode, true);
-						let loc = p.loc(tok.span) + expr.loc;
-						Some((
-							ExprField {
-								ident: p.ident(tok),
-								expr,
-							},
-							loc,
-						))
-					}) {
+				let expr = if literal
+					&& p.peek()
+						.map(|tok| tok.kind == TokenKind::OpenDelim(Delimiter::Brace))
+						.unwrap_or(false)
+				{
+					if let Some(fields) = p.struct_expr() {
 						Expr {
 							loc: path.loc + fields.1,
 							node: ExprKind::Struct(StructExpr { path, fields: fields.0 }),
@@ -353,6 +522,52 @@ where
 				}
 
 				expr
+			},
+			TokenKind::Keyword(Keyword::Use) => |p, mode, _| {
+				let loc = p.next().expect("tried to parse use at <eof>").span;
+				let mut loc = p.loc(loc);
+				let path = if let Some(path) = p.path() {
+					path
+				} else {
+					p.diagnostics.add(
+						Diagnostic::new(Level::Error, "expected template use path")
+							.add_label(Label::primary("", loc.into())),
+					);
+					return Expr {
+						node: ExprKind::Err,
+						loc,
+					};
+				};
+				loc += path.loc;
+				let fields = if let Some(fields) = p.struct_expr() {
+					fields
+				} else {
+					p.diagnostics.add(
+						Diagnostic::new(Level::Error, "expected template arguments")
+							.add_label(Label::primary("", loc.into())),
+					);
+					return Expr {
+						node: ExprKind::Err,
+						loc,
+					};
+				};
+				loc += fields.1;
+
+				if mode == ExprMode::Behavior {
+					Expr {
+						node: ExprKind::BehExpr(Box::new(BehExprKind::Use(StructExpr { path, fields: fields.0 }))),
+						loc,
+					}
+				} else {
+					p.diagnostics.add(
+						Diagnostic::new(Level::Error, "use expressions are not allowed in this context")
+							.add_label(Label::primary("", loc.into())),
+					);
+					Expr {
+						node: ExprKind::Err,
+						loc,
+					}
+				}
 			},
 			_ => return None,
 		})
@@ -397,7 +612,7 @@ where
 				Op::Eq => (
 					|p, left, mode, literal| {
 						let loc = p.next().expect("tried to parse assignment at <eof>").span;
-						let value = p.expr(mode, literal);
+						let value = p.expr_must(mode, literal);
 						Expr {
 							loc: left.loc + value.loc,
 							node: ExprKind::Assign(Box::new((left, p.loc(loc), value))),
@@ -424,7 +639,26 @@ where
 					|p, left, mode, literal| p.binary(BinOpKind::Le, precedence::COMPARISON, left, mode, literal),
 					precedence::COMPARISON,
 				),
-				_ => unreachable!(),
+				Op::Plus => (
+					|p, left, mode, literal| p.op_assignment(BinOpKind::Add, left, mode, literal),
+					precedence::ASSIGNMENT,
+				),
+				Op::Minus => (
+					|p, left, mode, literal| p.op_assignment(BinOpKind::Sub, left, mode, literal),
+					precedence::ASSIGNMENT,
+				),
+				Op::Star => (
+					|p, left, mode, literal| p.op_assignment(BinOpKind::Mul, left, mode, literal),
+					precedence::ASSIGNMENT,
+				),
+				Op::Slash => (
+					|p, left, mode, literal| p.op_assignment(BinOpKind::Div, left, mode, literal),
+					precedence::ASSIGNMENT,
+				),
+				Op::Percent => (
+					|p, left, mode, literal| p.op_assignment(BinOpKind::Rem, left, mode, literal),
+					precedence::ASSIGNMENT,
+				),
 			},
 			TokenKind::And => (
 				|p, left, mode, literal| p.binary(BinOpKind::And, precedence::AND, left, mode, literal),
@@ -437,7 +671,7 @@ where
 			TokenKind::OpenDelim(Delimiter::Paren) => (
 				|p, left, mode, _| {
 					let exprs = if let Some(exprs) = p.delim_list(TokenKind::Comma, Delimiter::Paren, |p| {
-						let expr = p.expr(mode, true);
+						let expr = p.expr_must(mode, true);
 						let loc = expr.loc;
 						Some((expr, loc))
 					}) {
@@ -548,7 +782,7 @@ where
 			TokenKind::OpenDelim(Delimiter::Bracket) => (
 				|p, left, mode, _| {
 					p.next();
-					let expr = p.expr(mode, true);
+					let expr = p.expr_must(mode, true);
 					let end = expect!(p, TokenKind::CloseDelim(Delimiter::Bracket), err = "expected `]`");
 					if mode != ExprMode::Behavior {
 						Expr {
@@ -575,7 +809,7 @@ where
 
 	fn unary(&mut self, mode: ExprMode, struct_literal: bool) -> Expr<'a> {
 		let op = self.next().unwrap();
-		let expr = self.precedence(precedence::UNARY, mode, struct_literal);
+		let expr = self.precedence_must(precedence::UNARY, mode, struct_literal);
 		let loc = expr.loc + op.span;
 		if mode != ExprMode::Behavior {
 			Expr {
@@ -606,7 +840,7 @@ where
 
 	fn binary(&mut self, op: BinOpKind, prec: u8, left: Expr<'a>, mode: ExprMode, struct_literal: bool) -> Expr<'a> {
 		let span = self.next().expect("tried to parse binary expr at <eof>").span;
-		let right = self.precedence(prec + 1, mode, struct_literal);
+		let right = self.precedence_must(prec + 1, mode, struct_literal);
 		let loc = left.loc + right.loc;
 
 		if mode == ExprMode::Behavior {
@@ -628,6 +862,22 @@ where
 		}
 	}
 
+	fn op_assignment(&mut self, op: BinOpKind, left: Expr<'a>, mode: ExprMode, struct_literal: bool) -> Expr<'a> {
+		let loc = self.next().expect("tried to parse assignment at <eof>").span;
+		let value = self.expr_must(mode, struct_literal);
+		Expr {
+			loc: left.loc + value.loc,
+			node: ExprKind::AssignOp(Box::new((
+				left,
+				BinOp {
+					node: op,
+					loc: self.loc(loc),
+				},
+				value,
+			))),
+		}
+	}
+
 	fn paren(&mut self, mode: ExprMode, _: bool) -> Expr<'a> {
 		let loc = self.next().expect("tried to parse tuple/RPN var/group at <eof>").span;
 		let mut loc = self.loc(loc);
@@ -637,7 +887,7 @@ where
 				loc: loc + tok.span,
 			};
 		}
-		let expr = self.expr(mode, true);
+		let expr = self.expr_must(mode, true);
 		loc += expr.loc;
 		let expr = if let Some(tok) = self.next() {
 			loc += tok.span;
@@ -681,12 +931,87 @@ where
 		}
 	}
 
-	fn array_or_map(&mut self, mode: ExprMode, _: bool) -> Expr<'a> { unreachable!() }
+	fn array_or_map(&mut self, mode: ExprMode, _: bool) -> Expr<'a> {
+		let loc = self.next().expect("tried to parse array at <eof>").span;
+		let mut loc = self.loc(loc);
+		if let Some(tok) = peek!(self, TokenKind::CloseDelim(Delimiter::Bracket)) {
+			loc += tok.span;
+			Expr {
+				node: ExprKind::EmptyMapOrArray,
+				loc,
+			}
+		} else {
+			let key = self.expr_must(mode, true);
+			if peek!(self, TokenKind::Colon).is_some() {
+				let value = self.expr_must(mode, true);
+
+				let mut items = vec![(key, value)];
+
+				loop {
+					if let Some(tok) = peek!(self, TokenKind::CloseDelim(Delimiter::Bracket)) {
+						loc += tok.span;
+						break;
+					} else if peek!(self, TokenKind::Comma).is_some() {
+						if let Some(tok) = peek!(self, TokenKind::CloseDelim(Delimiter::Bracket)) {
+							loc += tok.span;
+							break;
+						} else {
+							let key = self.expr_must(mode, true);
+							loc += key.loc;
+							expect!(self, TokenKind::Colon, err = "expected `:` after key in map expression");
+							let value = self.expr_must(mode, true);
+							loc += value.loc;
+							items.push((key, value));
+						}
+					} else {
+						let key = self.expr_must(mode, true);
+						loc += key.loc;
+						expect!(self, TokenKind::Colon, err = "expected `:` after key in map expression");
+						let value = self.expr_must(mode, true);
+						loc += value.loc;
+						items.push((key, value));
+					}
+				}
+
+				Expr {
+					node: ExprKind::Map(items),
+					loc,
+				}
+			} else {
+				let mut items = vec![key];
+
+				loop {
+					if let Some(tok) = peek!(self, TokenKind::CloseDelim(Delimiter::Bracket)) {
+						loc += tok.span;
+						break;
+					} else if peek!(self, TokenKind::Comma).is_some() {
+						if let Some(tok) = peek!(self, TokenKind::CloseDelim(Delimiter::Bracket)) {
+							loc += tok.span;
+							break;
+						} else {
+							let value = self.expr_must(mode, true);
+							loc += value.loc;
+							items.push(value);
+						}
+					} else {
+						let value = self.expr_must(mode, true);
+						loc += value.loc;
+						items.push(value);
+					}
+				}
+
+				Expr {
+					node: ExprKind::Array(items),
+					loc,
+				}
+			}
+		}
+	}
 
 	fn tuple(&mut self, first: Expr<'a>, mode: ExprMode, mut loc: Loc<'a>) -> Expr<'a> {
 		let mut items = vec![first];
 		let insert = |p: &mut Self, items: &mut Vec<Expr<'a>>, loc: &mut Loc<'a>| {
-			let val = p.expr(mode, true);
+			let val = p.expr_must(mode, true);
 			*loc += val.loc;
 			items.push(val);
 		};
@@ -714,7 +1039,7 @@ where
 	}
 
 	fn rpn_var(&mut self, ty: Expr<'a>, loc: Loc<'a>) -> Expr<'a> {
-		let mut loc = ty.loc;
+		let mut loc = ty.loc + loc;
 		let rpn_ty = if let ExprKind::Path(path) = ty.node {
 			if path.node.len() == 1 {
 				let ty = path.node.into_iter().next().unwrap();
@@ -797,7 +1122,7 @@ where
 			);
 			RPNType::Local
 		};
-		let var = self.expr(ExprMode::RPN, false);
+		let var = self.expr_must(ExprMode::RPN, false);
 		loc += var.loc;
 		let unit = if peek!(self, TokenKind::Comma).is_some() {
 			let ty = self.ty();
@@ -818,12 +1143,12 @@ where
 	fn ifs(&mut self, mode: ExprMode, _: bool) -> Expr<'a> {
 		let loc = self.next().expect("tried to parse if at <eof>").span;
 		let mut loc = self.loc(loc);
-		let expr = self.expr(if mode != ExprMode::RPN { ExprMode::Normal } else { mode }, false);
+		let expr = self.expr_must(if mode != ExprMode::RPN { ExprMode::Normal } else { mode }, false);
 		loc += expr.loc;
 		let block = self.block(mode);
 
 		let els = if peek!(self, TokenKind::Else).is_some() {
-			let expr = self.expr(mode, false);
+			let expr = self.expr_must(mode, false);
 			loc += expr.loc;
 
 			if !matches!(&expr.node, ExprKind::If(..) | ExprKind::Block(..)) {
@@ -847,7 +1172,7 @@ where
 	fn whiles(&mut self, mode: ExprMode, _: bool) -> Expr<'a> {
 		let loc = self.next().expect("tried to parse while at <eof>").span;
 		let mut loc = self.loc(loc);
-		let expr = self.expr(if mode != ExprMode::RPN { ExprMode::Normal } else { mode }, false);
+		let expr = self.expr_must(if mode != ExprMode::RPN { ExprMode::Normal } else { mode }, false);
 		loc += expr.loc;
 		let block = self.block(mode);
 		loc += block.loc;
@@ -863,7 +1188,7 @@ where
 		let mut loc = self.loc(loc);
 		let pat = self.pat();
 		expect!(self, TokenKind::In, err = "expected `in` after pattern");
-		let expr = self.expr(if mode != ExprMode::RPN { ExprMode::Normal } else { mode }, false);
+		let expr = self.expr_must(if mode != ExprMode::RPN { ExprMode::Normal } else { mode }, false);
 		loc += expr.loc;
 		let block = self.block(mode);
 
@@ -876,12 +1201,12 @@ where
 	fn switch(&mut self, mode: ExprMode, _: bool) -> Expr<'a> {
 		let loc = self.next().expect("tried to parse switch at <eof>").span;
 		let mut loc = self.loc(loc);
-		let expr = self.expr(if mode != ExprMode::RPN { ExprMode::Normal } else { mode }, false);
+		let expr = self.expr_must(if mode != ExprMode::RPN { ExprMode::Normal } else { mode }, false);
 		loc += expr.loc;
 		let arms = if let Some(arms) = self.delim_list(TokenKind::Comma, Delimiter::Brace, |p| {
-			let value = p.expr(mode, true);
+			let value = p.expr_must(mode, true);
 			expect!(p, TokenKind::Arrow, err = "expected `->` after arm value");
-			let body = p.expr(mode, true);
+			let body = p.expr_must(mode, true);
 			let loc = value.loc + body.loc;
 			Some((Arm { value, body, loc }, loc))
 		}) {
@@ -899,7 +1224,59 @@ where
 		}
 	}
 
-	fn closure(&mut self, mode: ExprMode) -> Expr<'a> { unreachable!() }
+	fn closure(&mut self, mode: ExprMode, struct_literal: bool) -> Expr<'a> {
+		let loc = self.next().expect("tried to parse closure at <eof>").span;
+		let mut loc = self.loc(loc);
+		let params = self
+			.delim_list(TokenKind::Comma, Delimiter::Paren, |p| {
+				let ident = expect!(p, TokenKind::Ident, err = "expected parameter identifier")?;
+				let ident = p.ident(ident);
+				let mut loc = ident.loc;
+				let ty = peek!(p, TokenKind::Colon).map(|_| {
+					let ty = p.ty();
+					loc += ty.loc;
+					ty
+				});
+				Some((
+					Param {
+						ident,
+						ty,
+						default: None,
+						loc,
+					},
+					loc,
+				))
+			})
+			.unwrap_or_else(|| {
+				self.diagnostics.add(
+					Diagnostic::new(Level::Error, "expected parameter list in closure")
+						.add_label(Label::primary("", loc.into())),
+				);
+				(Vec::new(), loc)
+			});
+		loc += params.1;
+		let output = if peek!(self, TokenKind::Arrow).is_some() {
+			RetTy::Ty(self.ty())
+		} else {
+			RetTy::Default(self.loc(Span {
+				start: params.1.span.end + 1,
+				end: params.1.span.end + 2,
+			}))
+		};
+		let block = Box::new(self.expr_must(mode, struct_literal));
+		loc += block.loc;
+
+		Expr {
+			node: ExprKind::Func(
+				FnDecl {
+					inputs: params.0,
+					output,
+				},
+				block,
+			),
+			loc,
+		}
+	}
 
 	fn block(&mut self, mode: ExprMode) -> Block<'a> {
 		let loc = if let Some(tok) = expect!(
@@ -919,7 +1296,7 @@ where
 		let mut ended = false;
 
 		let expr = |p: &mut Self, block: &mut Vec<Stmt<'a>>, loc: &mut Loc<'a>| {
-			let expr = p.expr(mode, true);
+			let expr = p.expr_must(mode, true);
 			if let ExprKind::Err = expr.node {
 				p.diagnostics.add(
 					Diagnostic::new(Level::Error, "expected expression").add_label(Label::primary("", expr.loc.into())),
@@ -970,7 +1347,7 @@ where
 						let pat = self.pat();
 						let ty = peek!(self, TokenKind::Colon).map(|_| self.ty());
 						let init = peek!(self, TokenKind::Op(Op::Eq))
-							.map(|_| self.expr(if mode == ExprMode::RPN { mode } else { ExprMode::Normal }, true));
+							.map(|_| self.expr_must(if mode == ExprMode::RPN { mode } else { ExprMode::Normal }, true));
 
 						let semi = expect!(
 							self,
@@ -998,6 +1375,22 @@ where
 		}
 
 		Block { node: block, loc }
+	}
+
+	fn struct_expr(&mut self) -> Option<(Vec<ExprField<'a>>, Loc<'a>)> {
+		self.delim_list(TokenKind::Comma, Delimiter::Brace, |p| {
+			let tok = expect!(p, TokenKind::Ident, err = "expected field name")?;
+			expect!(p, TokenKind::Colon, err = "expected `colon`");
+			let expr = p.expr_must(ExprMode::Normal, true);
+			let loc = p.loc(tok.span) + expr.loc;
+			Some((
+				ExprField {
+					ident: p.ident(tok),
+					expr,
+				},
+				loc,
+			))
+		})
 	}
 
 	fn ty(&mut self) -> Ty<'a> {
@@ -1352,7 +1745,7 @@ where
 		let ty = self.ty();
 		let mut loc = ty.loc + ident.span;
 		let default = if peek!(self, TokenKind::Op(Op::Eq)).is_some() {
-			let expr = self.expr(if rpn { ExprMode::RPN } else { ExprMode::Normal }, true);
+			let expr = self.expr_must(if rpn { ExprMode::RPN } else { ExprMode::Normal }, true);
 			if let ExprKind::Err = expr.node {
 				self.diagnostics.add(
 					Diagnostic::new(Level::Error, "expected expression").add_label(Label::primary("", expr.loc.into())),
@@ -1385,13 +1778,19 @@ where
 			};
 		};
 		match tok.kind {
-			TokenKind::Ident if tok.data == "_" => Pat {
-				loc: self.loc(tok.span),
-				node: PatKind::Ignore,
+			TokenKind::Ident if tok.data == "_" => {
+				self.next();
+				Pat {
+					loc: self.loc(tok.span),
+					node: PatKind::Ignore,
+				}
 			},
-			TokenKind::Ident => Pat {
-				loc: self.loc(tok.span),
-				node: PatKind::Binding(self.ident(tok)),
+			TokenKind::Ident => {
+				self.next();
+				Pat {
+					loc: self.loc(tok.span),
+					node: PatKind::Binding(self.ident(tok)),
+				}
 			},
 			TokenKind::OpenDelim(Delimiter::Paren) => self
 				.delim_list(TokenKind::Comma, Delimiter::Paren, |p| {

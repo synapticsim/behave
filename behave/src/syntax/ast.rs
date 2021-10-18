@@ -106,7 +106,7 @@ pub enum ExprKind<'a> {
 	RPNFunc(FnDecl<'a>, P<Expr<'a>>),
 	Block(Block<'a>),
 	Assign(P<(Expr<'a>, Loc<'a>, Expr<'a>)>),
-	AssignOp(P<Expr<'a>>, BinOp<'a>, P<Expr<'a>>), //
+	AssignOp(P<(Expr<'a>, BinOp<'a>, Expr<'a>)>), //
 	Field(P<Expr<'a>>, Ident<'a>),
 	Index(P<(Expr<'a>, Expr<'a>)>),
 	Path(Path<'a>),
@@ -115,7 +115,7 @@ pub enum ExprKind<'a> {
 	Ret(Option<P<Expr<'a>>>),
 	Struct(StructExpr<'a>),
 	Paren(P<Expr<'a>>),
-	BehExpr(P<BehExprKind<'a>>), //
+	BehExpr(P<BehExprKind<'a>>),
 	RPNAccess(P<RPNAccess<'a>>),
 	Ref(P<Expr<'a>>),
 	Err,
