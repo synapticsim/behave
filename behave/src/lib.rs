@@ -1,47 +1,36 @@
-use crate::{
-	diagnostic::{Diagnostic, Diagnostics},
-	syntax::parser::Parser,
-};
+use std::{io::Read, path::PathBuf};
+
+use crate::diagnostic::{Diagnostic, Diagnostics};
 
 pub mod diagnostic;
 // mod output;
-pub mod syntax;
 
 /// The result of a compilation.
 pub struct CompileResult {
-	/// The compiled XML. Can be `None` if the compilation failed.
-	pub compiled: Option<String>,
-	/// The diagnostics generated during compilation.
+	/// The diagnostics produced during compilation.
 	pub diagnostics: Vec<Diagnostic>,
+	/// The files to write to disk, relative to the output directory.
+	pub files: Vec<(PathBuf, String)>,
 }
 
-#[derive(Clone)]
-/// A `behave` source file.
-pub struct SourceFile {
-	/// The path of the source file.
-	pub path: String,
-	/// The contents of the source file.
-	pub contents: String,
-}
-
-/// Compile a `behave` project.
+/// Compile a `behave` file.
 ///
 /// # Parameters:
-/// `file`: The main file of the project.
-/// `source_loader`: File loader that loads files relative to the main file of the project.
-/// `out_loader`: File loader that loads files in the output directory for GLTF verification.
-pub fn compile<'a, S, O>(file: &'a SourceFile, mut source_loader: S, out_loader: O) -> CompileResult
+/// `file`: The file to compile.
+/// `name`: The name of the file.
+/// `loader`: A function to load files relative to the folder that contains `file`.
+pub fn compile<R, F>(mut file: R, name: &str, loader: F) -> CompileResult
 where
-	S: FnMut(&[&str]) -> Option<&'a SourceFile>,
-	O: FnMut(&str) -> Option<String>,
+	R: Read,
+	F: FnMut(PathBuf) -> Option<R>,
 {
-	let mut diagnostics = Diagnostics::new();
-
-	let ast = Parser::new(file, &[], &mut source_loader, &mut diagnostics).main();
-	println!("{:#?}", ast);
+	let mut buf: PathBuf = name.into();
+	buf.set_extension("xml");
+	let mut s = String::new();
+	file.read_to_string(&mut s).unwrap();
 
 	CompileResult {
-		compiled: None,
-		diagnostics: diagnostics.get(),
+		diagnostics: Vec::new(),
+		files: vec![(buf, s)],
 	}
 }
